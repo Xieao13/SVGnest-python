@@ -12,11 +12,11 @@ import json
 from typing import List, Dict, Tuple, Any, Optional, Union
 import threading
 import time
+import pyclipper  # 使用pyclipper代替clipper库
 
 # Import converted JS libraries - these would be your Python conversions of the JS libraries
 import geometryutil
 import svgparser
-import clipper
 import placementworker
 import matrix
 
@@ -487,15 +487,16 @@ class SvgNest:
         if not offset or offset == 0 or geometryutil.almostEqual(offset, 0):
             return [polygon]
 
-        # Use the clipper library to perform the offset
+        # 使用PyClipper库执行多边形偏移
         p = self.svg_to_clipper(polygon)
 
+        # 创建PyClipper偏移对象
         miter_limit = 2
-        co = clipper.ClipperOffset(miter_limit, self.config['curve_tolerance'] * self.config['clipper_scale'])
-        co.AddPath(p, clipper.JoinType.jtRound, clipper.EndType.etClosedPolygon)
+        co = pyclipper.PyclipperOffset(miter_limit, self.config['curve_tolerance'] * self.config['clipper_scale'])
+        co.AddPath(p, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
 
-        new_paths = clipper.Paths()
-        co.Execute(new_paths, offset * self.config['clipper_scale'])
+        # 执行偏移并获取结果
+        new_paths = co.Execute(offset * self.config['clipper_scale'])
 
         result = []
         for i in range(len(new_paths)):
@@ -510,23 +511,26 @@ class SvgNest:
 
         p = self.svg_to_clipper(polygon)
 
-        # Remove self-intersections and find the biggest polygon that's left
-        simple = clipper.Clipper.SimplifyPolygon(p, clipper.PolyFillType.pftNonZero)
+        # 使用PyClipper简化多边形，去除自相交
+        pc = pyclipper.Pyclipper()
+        pc.AddPath(p, pyclipper.PT_SUBJECT, True)
+        simple = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
 
         if not simple or len(simple) == 0:
             return None
 
+        # 找到面积最大的多边形
         biggest = simple[0]
-        biggest_area = abs(clipper.Clipper.Area(biggest))
+        biggest_area = abs(pyclipper.Area(biggest))
 
         for i in range(1, len(simple)):
-            area = abs(clipper.Clipper.Area(simple[i]))
+            area = abs(pyclipper.Area(simple[i]))
             if area > biggest_area:
                 biggest = simple[i]
                 biggest_area = area
 
-        # Clean up singularities, coincident points and edges
-        clean = clipper.Clipper.CleanPolygon(
+        # 清理奇异点、重合点和边
+        clean = pyclipper.CleanPolygon(
             biggest, self.config['curve_tolerance'] * self.config['clipper_scale']
         )
 
@@ -535,69 +539,77 @@ class SvgNest:
 
         return self.clipper_to_svg(clean)
 
-    def svg_to_clipper(self, polygon: List[Dict[str, float]]) -> List[Dict[str, int]]:
+    def svg_to_clipper(self, polygon: List[Dict[str, float]]) -> List[List[int]]:
         """Convert SVG coordinates to Clipper coordinates"""
+        # PyClipper需要的是整数坐标，所以先放大再取整
         clip = []
         for point in polygon:
-            clip.append({
-                'X': point['x'],
-                'Y': point['y']
-            })
-
-        clipper.JS.ScaleUpPath(clip, self.config['clipper_scale'])
+            clip.append([
+                int(point['x'] * self.config['clipper_scale']),
+                int(point['y'] * self.config['clipper_scale'])
+            ])
 
         return clip
 
-    def clipper_to_svg(self, polygon: List[Dict[str, int]]) -> List[Dict[str, float]]:
+    def clipper_to_svg(self, polygon: List[List[int]]) -> List[Dict[str, float]]:
         """Convert Clipper coordinates to SVG coordinates"""
         normal = []
         for point in polygon:
             normal.append({
-                'x': point['X'] / self.config['clipper_scale'],
-                'y': point['Y'] / self.config['clipper_scale']
+                'x': point[0] / self.config['clipper_scale'],
+                'y': point[1] / self.config['clipper_scale']
             })
 
         return normal
 
     def apply_placement(self, placement: List[List[Dict[str, Any]]]) -> List[Any]:
         """Apply the placement to SVG elements"""
+        from lxml import etree
+        from copy import deepcopy
+
+        # 创建深拷贝而不是使用cloneNode
         clone = []
         for i in range(len(self.parts)):
-            clone.append(self.parts[i].cloneNode(False))
+            clone.append(deepcopy(self.parts[i]))
 
         svg_list = []
 
         for i in range(len(placement)):
-            new_svg = self.svg.cloneNode(False)
-            new_svg.setAttribute('viewBox', f'0 0 {self.bin_bounds["width"]} {self.bin_bounds["height"]}')
-            new_svg.setAttribute('width', f'{self.bin_bounds["width"]}px')
-            new_svg.setAttribute('height', f'{self.bin_bounds["height"]}px')
+            # 创建新的SVG元素
+            new_svg = deepcopy(self.svg)
 
-            bin_clone = self.bin.cloneNode(False)
-            bin_clone.setAttribute('class', 'bin')
-            bin_clone.setAttribute('transform', f'translate({-self.bin_bounds["x"]} {-self.bin_bounds["y"]})')
-            new_svg.appendChild(bin_clone)
+            # 设置viewBox和尺寸
+            new_svg.set('viewBox', f'0 0 {self.bin_bounds["width"]} {self.bin_bounds["height"]}')
+            new_svg.set('width', f'{self.bin_bounds["width"]}px')
+            new_svg.set('height', f'{self.bin_bounds["height"]}px')
+
+            # 克隆bin元素
+            bin_clone = deepcopy(self.bin)
+            bin_clone.set('class', 'bin')
+            bin_clone.set('transform', f'translate({-self.bin_bounds["x"]} {-self.bin_bounds["y"]})')
+            new_svg.append(bin_clone)
 
             for j in range(len(placement[i])):
                 p = placement[i][j]
                 part = self.tree[p.id]
 
-                # Create a group for transformations
-                part_group = document.createElementNS(self.svg.namespaceURI, 'g')
-                part_group.setAttribute('transform', f'translate({p.x} {p.y}) rotate({p.rotation})')
-                part_group.appendChild(clone[part.source])
+                # 创建变换组
+                part_group = etree.Element('{http://www.w3.org/2000/svg}g')
+                part_group.set('transform', f'translate({p.x} {p.y}) rotate({p.rotation})')
+                part_group.append(clone[part.source])
 
                 if hasattr(part, 'children') and len(part.children) > 0:
                     flattened = self._flatten_tree(part.children, True)
                     for k in range(len(flattened)):
                         c = clone[flattened[k].source]
-                        # Add class to indicate hole
-                        if flattened[k].hole and (not c.getAttribute('class') or
-                                                  c.getAttribute('class').indexOf('hole') < 0):
-                            c.setAttribute('class', c.getAttribute('class') + ' hole')
-                        part_group.appendChild(c)
+                        # 添加类以指示孔洞
+                        if flattened[k].hole:
+                            class_attr = c.get('class', '')
+                            if 'hole' not in class_attr:
+                                c.set('class', (class_attr + ' hole').strip())
+                        part_group.append(c)
 
-                new_svg.appendChild(part_group)
+                new_svg.append(part_group)
 
             svg_list.append(new_svg)
 
@@ -625,41 +637,36 @@ class SvgNest:
 
 def minkowski_difference(A: List[Dict[str, float]], B: List[Dict[str, float]]) -> List[List[Dict[str, float]]]:
     """Calculate the Minkowski difference between polygons A and B"""
-    # Convert to Clipper coordinates
+    # 将A和B转换为PyClipper可用的坐标格式（整数坐标）
+    scale = 10000000  # 坐标缩放因子
+
+    # 转换A到PyClipper格式
     Ac = []
     for point in A:
-        Ac.append({'X': point['x'], 'Y': point['y']})
+        Ac.append([int(point['x'] * scale), int(point['y'] * scale)])
 
-    clipper.JS.ScaleUpPath(Ac, 10000000)
-
+    # 转换B到PyClipper格式并取负值（Minkowski差需要B取负）
     Bc = []
     for point in B:
-        Bc.append({'X': point['x'], 'Y': point['y']})
+        Bc.append([int(-point['x'] * scale), int(-point['y'] * scale)])
 
-    clipper.JS.ScaleUpPath(Bc, 10000000)
-
-    # Negate B coordinates
-    for i in range(len(Bc)):
-        Bc[i]['X'] *= -1
-        Bc[i]['Y'] *= -1
-
-    # Calculate Minkowski sum
-    solution = clipper.Clipper.MinkowskiSum(Ac, Bc, True)
+    # 使用PyClipper计算Minkowski和
+    solution = pyclipper.MinkowskiSum(Ac, Bc, True)
     clipper_nfp = None
 
-    # Find the largest area
+    # 找出面积最大的多边形
     largest_area = None
     for i in range(len(solution)):
         n = []
         for point in solution[i]:
-            n.append({'x': point['X'] / 10000000, 'y': point['Y'] / 10000000})
+            n.append({'x': point[0] / scale, 'y': point[1] / scale})
 
         sarea = geometryutil.polygonArea(n)
         if largest_area is None or largest_area > sarea:
             clipper_nfp = n
             largest_area = sarea
 
-    # Add B[0] to all points
+    # 将B[0]添加到所有点
     for i in range(len(clipper_nfp)):
         clipper_nfp[i]['x'] += B[0]['x']
         clipper_nfp[i]['y'] += B[0]['y']
@@ -823,7 +830,7 @@ def main():
     nest.set_bin(bin_element)
 
     # Configure nesting parameters
-    nest.config({
+    nest.config.update({
         'spacing': 2,
         'rotations': 4,
         'population_size': 10,
@@ -858,7 +865,3 @@ def main():
     #     time.sleep(0.5)
 
     print("Nesting completed!")
-
-
-if __name__ == "__main__":
-    main()
