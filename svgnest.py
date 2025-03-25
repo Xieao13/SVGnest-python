@@ -13,9 +13,9 @@ from typing import List, Dict, Tuple, Any, Optional, Union
 import threading
 import time
 import pyclipper  # 使用pyclipper代替clipper库
-
-# Import converted JS libraries - these would be your Python conversions of the JS libraries
 import geometryutil
+# Import converted JS libraries - these would be your Python conversions of the JS libraries
+from geometryutil import GeometryUtil
 import svgparser
 import placementworker
 import matrix
@@ -79,7 +79,7 @@ class SvgNest:
             return self.config
 
         # Clean up inputs
-        if 'curve_tolerance' in c and not geometryutil.almostEqual(float(c['curve_tolerance']), 0):
+        if 'curve_tolerance' in c and not GeometryUtil.almostEqual(float(c['curve_tolerance']), 0):
             self.config['curve_tolerance'] = float(c['curve_tolerance'])
 
         if 'spacing' in c:
@@ -133,7 +133,7 @@ class SvgNest:
         if not self.bin_polygon or len(self.bin_polygon) < 3:
             return False
 
-        self.bin_bounds = geometryutil.getPolygonBounds(self.bin_polygon)
+        self.bin_bounds = GeometryUtil.getPolygonBounds(self.bin_polygon)
 
         if self.config['spacing'] > 0:
             offset_bin = self.polygon_offset(self.bin_polygon, -0.5 * self.config['spacing'])
@@ -157,7 +157,7 @@ class SvgNest:
         self.bin_polygon.height = y_bin_max - y_bin_min
 
         # All paths need to have the same winding direction
-        if geometryutil.polygonArea(self.bin_polygon) > 0:
+        if GeometryUtil.polygonArea(self.bin_polygon) > 0:
             self.bin_polygon.reverse()
 
         # Remove duplicate endpoints, ensure counterclockwise winding direction
@@ -165,11 +165,11 @@ class SvgNest:
             start = self.tree[i][0]
             end = self.tree[i][-1]
 
-            if start == end or (geometryutil.almostEqual(start['x'], end['x']) and
-                                geometryutil.almostEqual(start['y'], end['y'])):
+            if start == end or (GeometryUtil.almostEqual(start['x'], end['x']) and
+                                GeometryUtil.almostEqual(start['y'], end['y'])):
                 self.tree[i].pop()
 
-            if geometryutil.polygonArea(self.tree[i]) > 0:
+            if GeometryUtil.polygonArea(self.tree[i]) > 0:
                 self.tree[i].reverse()
 
         self.working = False
@@ -218,7 +218,7 @@ class SvgNest:
             adam = tree.copy()
 
             # Seed with decreasing area
-            adam.sort(key=lambda x: -abs(geometryutil.polygonArea(x)))
+            adam.sort(key=lambda x: -abs(GeometryUtil.polygonArea(x)))
 
             self.GA = GeneticAlgorithm(adam, bin_polygon, config)
 
@@ -288,28 +288,28 @@ class SvgNest:
             search_edges = config['explore_concave']
             use_holes = config['use_holes']
 
-            A = geometryutil.rotatePolygon(pair['A'], pair['key']['Arotation'])
-            B = geometryutil.rotatePolygon(pair['B'], pair['key']['Brotation'])
+            A = GeometryUtil.rotatePolygon(pair['A'], pair['key']['Arotation'])
+            B = GeometryUtil.rotatePolygon(pair['B'], pair['key']['Brotation'])
 
             nfp = None
 
             if pair['key']['inside']:
-                if geometryutil.isRectangle(A, 0.001):
-                    nfp = geometryutil.noFitPolygonRectangle(A, B)
+                if GeometryUtil.isRectangle(A, 0.001):
+                    nfp = GeometryUtil.noFitPolygonRectangle(A, B)
                 else:
-                    nfp = geometryutil.noFitPolygon(A, B, True, search_edges)
+                    nfp = GeometryUtil.noFitPolygon(A, B, True, search_edges)
 
                 # Ensure all interior NFPs have the same winding direction
                 if nfp and len(nfp) > 0:
                     for i in range(len(nfp)):
-                        if geometryutil.polygonArea(nfp[i]) > 0:
+                        if GeometryUtil.polygonArea(nfp[i]) > 0:
                             nfp[i].reverse()
                 else:
                     # Warning on null inner NFP
                     print(f"NFP Warning: {pair['key']}")
             else:
                 if search_edges:
-                    nfp = geometryutil.noFitPolygon(A, B, False, search_edges)
+                    nfp = GeometryUtil.noFitPolygon(A, B, False, search_edges)
                 else:
                     nfp = minkowski_difference(A, B)
 
@@ -322,8 +322,8 @@ class SvgNest:
 
                 for i in range(len(nfp)):
                     if not search_edges or i == 0:  # Only the first NFP is guaranteed to pass sanity check
-                        if abs(geometryutil.polygonArea(nfp[i])) < abs(geometryutil.polygonArea(A)):
-                            print(f"NFP Area Error: {abs(geometryutil.polygonArea(nfp[i]))}, {pair['key']}")
+                        if abs(GeometryUtil.polygonArea(nfp[i])) < abs(GeometryUtil.polygonArea(A)):
+                            print(f"NFP Area Error: {abs(GeometryUtil.polygonArea(nfp[i]))}, {pair['key']}")
                             print(f"NFP: {json.dumps(nfp[i])}")
                             print(f"A: {json.dumps(A)}")
                             print(f"B: {json.dumps(B)}")
@@ -335,29 +335,29 @@ class SvgNest:
 
                 # For outer NFPs, the first is guaranteed to be the largest
                 for i in range(len(nfp)):
-                    if geometryutil.polygonArea(nfp[i]) > 0:
+                    if GeometryUtil.polygonArea(nfp[i]) > 0:
                         nfp[i].reverse()
 
                     if i > 0:
-                        if geometryutil.pointInPolygon(nfp[i][0], nfp[0]):
-                            if geometryutil.polygonArea(nfp[i]) < 0:
+                        if GeometryUtil.pointInPolygon(nfp[i][0], nfp[0]):
+                            if GeometryUtil.polygonArea(nfp[i]) < 0:
                                 nfp[i].reverse()
 
                 # Generate NFPs for children (holes of parts) if any exist
                 if use_holes and hasattr(A, 'childNodes') and len(A.childNodes) > 0:
-                    B_bounds = geometryutil.getPolygonBounds(B)
+                    B_bounds = GeometryUtil.getPolygonBounds(B)
 
                     for i in range(len(A.childNodes)):
-                        A_bounds = geometryutil.getPolygonBounds(A.childNodes[i])
+                        A_bounds = GeometryUtil.getPolygonBounds(A.childNodes[i])
 
                         # No need to find NFP if B's bounding box is too big
                         if A_bounds['width'] > B_bounds['width'] and A_bounds['height'] > B_bounds['height']:
-                            cnfp = geometryutil.noFitPolygon(A.childNodes[i], B, True, search_edges)
+                            cnfp = GeometryUtil.noFitPolygon(A.childNodes[i], B, True, search_edges)
 
                             # Ensure all interior NFPs have the same winding direction
                             if cnfp and len(cnfp) > 0:
                                 for j in range(len(cnfp)):
-                                    if geometryutil.polygonArea(cnfp[j]) < 0:
+                                    if GeometryUtil.polygonArea(cnfp[j]) < 0:
                                         cnfp[j].reverse()
                                     nfp.append(cnfp[j])
 
@@ -379,7 +379,7 @@ class SvgNest:
         worker.nfp_cache = self.nfp_cache
 
         # Place paths
-        placements = [worker.place_paths([place_list.copy()])]
+        placements = [worker.placePaths([place_list.copy()])]
 
         if not placements or len(placements) == 0:
             return
@@ -400,9 +400,9 @@ class SvgNest:
             num_placed_parts = 0
 
             for i in range(len(self.best['placements'])):
-                total_area += abs(geometryutil.polygonArea(bin_polygon))
+                total_area += abs(GeometryUtil.polygonArea(bin_polygon))
                 for j in range(len(self.best['placements'][i])):
-                    placed_area += abs(geometryutil.polygonArea(
+                    placed_area += abs(GeometryUtil.polygonArea(
                         tree[self.best['placements'][i][j].id]
                     ))
                     num_placed_parts += 1
@@ -427,7 +427,7 @@ class SvgNest:
             poly = self.clean_polygon(poly)
 
             if (poly and len(poly) > 2 and
-                    abs(geometryutil.polygonArea(poly)) >
+                    abs(GeometryUtil.polygonArea(poly)) >
                     self.config['curve_tolerance'] * self.config['curve_tolerance']):
                 poly.source = i
                 polygons.append(poly)
@@ -452,7 +452,7 @@ class SvgNest:
                 if j == i:
                     continue
 
-                if geometryutil.pointInPolygon(p[0], polygon_list[j]):
+                if GeometryUtil.pointInPolygon(p[0], polygon_list[j]):
                     if not hasattr(polygon_list[j], 'children'):
                         polygon_list[j].children = []
 
@@ -484,7 +484,7 @@ class SvgNest:
 
     def polygon_offset(self, polygon: List[Dict[str, float]], offset: float) -> List[List[Dict[str, float]]]:
         """Offset a polygon by a given amount"""
-        if not offset or offset == 0 or geometryutil.almostEqual(offset, 0):
+        if not offset or offset == 0 or GeometryUtil.almostEqual(offset, 0):
             return [polygon]
 
         # 使用PyClipper库执行多边形偏移
@@ -661,7 +661,7 @@ def minkowski_difference(A: List[Dict[str, float]], B: List[Dict[str, float]]) -
         for point in solution[i]:
             n.append({'x': point[0] / scale, 'y': point[1] / scale})
 
-        sarea = geometryutil.polygonArea(n)
+        sarea = GeometryUtil.polygonArea(n)
         if largest_area is None or largest_area > sarea:
             clipper_nfp = n
             largest_area = sarea
@@ -865,3 +865,6 @@ def main():
     #     time.sleep(0.5)
 
     print("Nesting completed!")
+
+if __name__ == '__main__':
+    main()
