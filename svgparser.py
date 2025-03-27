@@ -314,9 +314,9 @@ class SvgParser:
         parser = etree.XMLParser(remove_blank_text=True)
         svg = etree.parse(StringIO(svgString), parser)
 
-        self.svgRoot = False
+        self.svgRoot = None  # 初始化为None而不是False
 
-        if svg:
+        if svg is not None:
             self.svg = svg
             root = svg.getroot()
 
@@ -325,10 +325,20 @@ class SvgParser:
         else:
             raise ValueError("Failed to parse SVG string")
 
-        if not self.svgRoot:
+        if self.svgRoot is None:  # 使用is None替代真值测试
             raise ValueError("SVG has no children")
 
         return self.svgRoot
+
+    def getStyle(self):
+        if self.svgRoot is None:  # 修改为明确的None检查
+            return False
+
+        for child in self.svgRoot:
+            if child.tag.endswith('style'):
+                return child
+
+        return False
 
     def cleanInput(self):
         # apply any transformations
@@ -344,16 +354,6 @@ class SvgParser:
         self.recurse(self.svgRoot, self.splitPath)
 
         return self.svgRoot
-
-    def getStyle(self):
-        if not self.svgRoot:
-            return False
-
-        for child in self.svgRoot:
-            if child.tag.endswith('style'):
-                return child
-
-        return False
 
     def _parse_path_data(self, d):
         """Parse SVG path data string into segments"""
@@ -843,21 +843,27 @@ class SvgParser:
                     index = parent.index(element)
                     parent.insert(index, child)
 
-    def filter(self, whitelist, element=None):
+    def filter(self, whitelist, element=None, depth=0):
         """Remove all elements with tag name not in the whitelist"""
         if not whitelist or len(whitelist) == 0:
             raise ValueError('invalid whitelist')
 
-        element = element or self.svgRoot
-        if element is None:
+        # 添加递归深度限制
+        if depth > 1000:  # 设置合理的递归深度上限
             return
 
-        # Process children first (depth-first)
+        if element is None:
+            element = self.svgRoot
+
+        if element is None:  # 明确检查None
+            return
+
+        # 处理子元素 (深度优先)
         children = list(element)
         for child in children:
-            self.filter(whitelist, child)
+            self.filter(whitelist, child, depth + 1)  # 传递递归深度
 
-        # Check if this element should be removed
+        # 检查是否应该移除此元素
         tag = element.tag.split('}')[-1]
         if len(list(element)) == 0 and tag not in whitelist:
             parent = element.getparent()
@@ -929,15 +935,19 @@ class SvgParser:
 
         return added_paths if added_paths else False
 
-    def recurse(self, element, func):
+    def recurse(self, element, func, depth=0):
         """Recursively run the given function on the given element"""
         if element is None:
             return
 
-        # Make a copy of the children to avoid modification issues during iteration
+        # 添加递归深度限制
+        if depth > 1000:  # 设置合理的递归深度上限
+            return
+
+        # 复制子元素以避免迭代过程中修改问题
         children = list(element)
         for child in children:
-            self.recurse(child, func)
+            self.recurse(child, func, depth + 1)
 
         func(element)
 

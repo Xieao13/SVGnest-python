@@ -9,17 +9,16 @@ import math
 import copy
 import random
 import json
-from typing import List, Dict, Tuple, Any, Optional, Union
+from typing import List, Dict, Tuple, Any, Optional, Union  # 明确导入typing模块
 import threading
 import time
 import pyclipper  # 使用pyclipper代替clipper库
+# 确保正确导入其他需要的模块
 import geometryutil
-# Import converted JS libraries - these would be your Python conversions of the JS libraries
 from geometryutil import GeometryUtil
 import svgparser
 import placementworker
 import matrix
-
 
 class SvgNest:
     """Main class for the SvgNest algorithm"""
@@ -63,7 +62,8 @@ class SvgNest:
         self.style = svgparser.getStyle()
         self.svg = svgparser.clean()
 
-        self.tree = self.get_parts(self.svg.childNodes)
+        if self.svg is not None:  # 明确检查是否有效
+            self.tree = self.get_parts(self.svg.childNodes)
 
         return self.svg
 
@@ -683,7 +683,7 @@ class GeneticAlgorithm:
             'mutation_rate': 10,
             'rotations': 4
         }
-        self.bin_bounds = geometryutil.getPolygonBounds(bin_polygon)
+        self.bin_bounds = GeometryUtil.getPolygonBounds(bin_polygon)
 
         # Population is an array of individuals
         # Each individual represents the order of insertion and rotation angle
@@ -706,7 +706,7 @@ class GeneticAlgorithm:
         random.shuffle(angle_list)
 
         for angle in angle_list:
-            rotated_part = geometryutil.rotatePolygon(part, angle)
+            rotated_part = GeometryUtil.rotatePolygon(part, angle)
 
             # Don't use angles where the part doesn't fit in the bin
             if rotated_part.width < self.bin_bounds['width'] and rotated_part.height < self.bin_bounds['height']:
