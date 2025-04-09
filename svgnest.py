@@ -1,30 +1,19 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-SvgNest Python Implementation
-Python port of SvgNest algorithm for optimizing 2D shape nesting
-"""
+# svgnest.py
 
 import math
-import copy
-import random
-import json
-from typing import List, Dict, Tuple, Any, Optional, Union
-import threading
 import time
-import pyclipper  # 使用pyclipper代替clipper库
-import geometryutil
-# Import converted JS libraries - these would be your Python conversions of the JS libraries
-from geometryutil import GeometryUtil
-import svgparser
-import placementworker
-import matrix
-
+from typing import List, Dict, Any, Optional, Callable, Union
+import pyclipper
+from geometry_util import GeometryUtil
+from svg_parser import SvgParser
+from genetic_algorithm import GeneticAlgorithm
+from placement_worker import PlacementWorker
+from lxml import etree
+from copy import deepcopy
 
 class SvgNest:
-    """Main class for the SvgNest algorithm"""
-
     def __init__(self):
+        """初始化SvgNest"""
         self.svg = None
         self.style = None
         self.parts = None
@@ -33,838 +22,961 @@ class SvgNest:
         self.bin_polygon = None
         self.bin_bounds = None
         self.nfp_cache = {}
-        self.config = {
-            'clipper_scale': 10000000,
-            'curve_tolerance': 0.3,
+        
+        # 配置参数
+        self._config = {
+            'clipperScale': 10000000,
+            'curveTolerance': 0.3,
             'spacing': 0,
             'rotations': 4,
-            'population_size': 10,
-            'mutation_rate': 10,
-            'use_holes': False,
-            'explore_concave': False
+            'populationSize': 10,
+            'mutationRate': 10,
+            'useHoles': False,
+            'exploreConcave': False
         }
+        
         self.working = False
         self.GA = None
         self.best = None
         self.worker_timer = None
         self.progress = 0
-
-    def parse_svg(self, svg_string: str) -> Any:
-        """Parse an SVG string and prepare it for nesting"""
-        # Reset if in progress
+    
+    @property
+    def config(self):
+        """配置属性的getter"""
+        return self._config
+   
+    def parse_svg(self, svg_string: str):
+        """解析SVG字符串"""
+        # 重置进度
         self.stop()
-
+        
         self.bin = None
         self.bin_polygon = None
         self.tree = None
+        
+        print("Starting SVG parsing...")
+        
+        # 解析SVG
+        try:
+            parser = SvgParser()
+            print("Created SvgParser instance")
+            
+            self.svg = parser.load(svg_string)
+            print("SVG loaded successfully")
+            
+            self.style = parser.get_style()
+            print(f"Style retrieved: {self.style is not None}")
+            
+            print("About to clean SVG...")
+            self.svg = parser.clean()
+            print("SVG cleaned successfully")
+            
+            if not self.svg:
+                print("Error: SVG is None after cleaning")
+                return None
+                
+            print("About to get parts...")
+            self.tree = self.get_parts(self.svg.childNodes)
+            print(f"Got {len(self.tree) if self.tree else 0} parts")
+        
+            print("SVG content:")
+            print(self.svg.toxml())
+            
+            return self.svg
+        except Exception as e:
+            print(f"Error in parse_svg: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
-        # Parse SVG using the converted SvgParser library
-        self.svg = svgparser.load(svg_string)
-        self.style = svgparser.getStyle()
-        self.svg = svgparser.clean()
-
-        self.tree = self.get_parts(self.svg.childNodes)
-
-        return self.svg
-
-    def set_bin(self, element: Any) -> None:
-        """Set the bin element for nesting"""
+    def set_bin(self, element):
+        """设置容器元素"""
         if not self.svg:
             return
         self.bin = element
 
-    def config(self, c: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Set or get configuration parameters"""
+    def set_config(self, c: Optional[Dict] = None) ->
+        """配置参数"""
         if not c:
-            return self.config
-
-        # Clean up inputs
-        if 'curve_tolerance' in c and not GeometryUtil.almostEqual(float(c['curve_tolerance']), 0):
-            self.config['curve_tolerance'] = float(c['curve_tolerance'])
-
+            return self._config
+            
+        if c.get('curveTolerance') and not GeometryUtil.almost_equal(float(c['curveTolerance']), 0):
+            self._config['curveTolerance'] = float(c['curveTolerance'])
+            
         if 'spacing' in c:
-            self.config['spacing'] = float(c['spacing'])
-
-        if 'rotations' in c and int(c['rotations']) > 0:
-            self.config['rotations'] = int(c['rotations'])
-
-        if 'population_size' in c and int(c['population_size']) > 2:
-            self.config['population_size'] = int(c['population_size'])
-
-        if 'mutation_rate' in c and int(c['mutation_rate']) > 0:
-            self.config['mutation_rate'] = int(c['mutation_rate'])
-
-        if 'use_holes' in c:
-            self.config['use_holes'] = bool(c['use_holes'])
-
-        if 'explore_concave' in c:
-            self.config['explore_concave'] = bool(c['explore_concave'])
-
-        svgparser.config({'tolerance': self.config['curve_tolerance']})
-
+            self._config['spacing'] = float(c['spacing'])
+            
+        if c.get('rotations') and int(c['rotations']) > 0:
+            self._config['rotations'] = int(c['rotations'])
+            
+        if c.get('populationSize') and int(c['populationSize']) > 2:
+            self._config['populationSize'] = int(c['populationSize'])
+            
+        if c.get('mutationRate') and int(c['mutationRate']) > 0:
+            self._config['mutationRate'] = int(c['mutationRate'])
+            
+        if 'useHoles' in c:
+            self._config['useHoles'] = bool(c['useHoles'])
+            
+        if 'exploreConcave' in c:
+            self._config['exploreConcave'] = bool(c['exploreConcave'])
+            
+        parser = SvgParser()
+        parser.config({'tolerance': self._config['curveTolerance']})
+        
         self.best = None
         self.nfp_cache = {}
         self.bin_polygon = None
         self.GA = None
+        
+        return self._config
 
-        return self.config
+    def get_parts(self, paths: List) -> List:
+        """获取零件列表"""
+        print("get_parts: 开始处理零件...")
+        polygons = []
+        parser = SvgParser()
+        
+        # 创建自定义列表类
+        CustomList = type('CustomList', (list,), {})
+        
+        # 转换所有路径为多边形
+        for i, path in enumerate(paths):
+            try:
+                print(f"get_parts: 处理元素 {i+1}/{len(paths)}, 类型: {path.nodeName if hasattr(path, 'nodeName') else '未知'}")
+                poly = parser.polygonify(path)
+                if not poly:
+                    print(f"get_parts: 元素 {i+1} 无法转换为多边形，跳过")
+                    continue
+                    
+                print(f"get_parts: 多边形转换成功，点数: {len(poly)}")
+                
+                # 转换为自定义列表以支持添加属性
+                if isinstance(poly, list) and not hasattr(poly, 'source'):
+                    poly = CustomList(poly)
+                    poly.polygon = poly  # 将多边形点列表赋值给polygon属性
+                
+                # 清理多边形
+                cleaned = self.clean_polygon(poly)
+                if not cleaned:
+                    print(f"get_parts: 清理多边形 {i+1} 失败，跳过")
+                    continue
+                
+                # 确保结果是可扩展的列表
+                if isinstance(cleaned, list) and not hasattr(cleaned, 'source'):
+                    cleaned = CustomList(cleaned)
+                    cleaned.polygon = cleaned  # 将清理后的多边形点列表赋值给polygon属性
+                
+                poly = cleaned
+                print(f"get_parts: 多边形清理成功，点数: {len(poly)}")
+                
+                # 检查面积
+                if (len(poly) > 2 and 
+                    abs(GeometryUtil.polygon_area(poly)) > 
+                    self.config['curveTolerance'] * self.config['curveTolerance']):
+                    poly.source = i
+                    polygons.append(poly)
+                    print(f"get_parts: 元素 {i+1} 添加为有效零件")
+                else:
+                    print(f"get_parts: 元素 {i+1} 面积太小或点数不足，跳过")
+            except Exception as e:
+                print(f"get_parts: 处理元素 {i+1} 时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+                
+        print(f"get_parts: 找到 {len(polygons)} 个有效零件")
+        
+        if not polygons:
+            print("get_parts: 没有找到有效零件，返回空列表")
+            return []
+            
+        # 将列表转换为树结构
+        try:
+            print("get_parts: 开始构建树结构...")
+            parents = []
+            id_counter = 0
+            
+            # 为每个叶子分配唯一ID
+            for i, p1 in enumerate(polygons):
+                print(f"get_parts: 检查零件 {i+1} 的层次关系")
+                is_child = False
+                for j, p2 in enumerate(polygons):
+                    if i == j:
+                        continue
+                    if GeometryUtil.point_in_polygon(p1[0], p2):
+                        if not hasattr(p2, 'children'):
+                            p2.children = []
+                        p2.children.append(p1)
+                        p1.parent = p2
+                        is_child = True
+                        print(f"get_parts: 零件 {i+1} 是零件 {j+1} 的子元素")
+                        break
+                if not is_child:
+                    parents.append(p1)
+                    print(f"get_parts: 零件 {i+1} 是顶层元素")
+                    
+            # 移除非父节点
+            for i in range(len(polygons)-1, -1, -1):
+                if polygons[i] not in parents:
+                    polygons.pop(i)
+                    
+            # 分配ID
+            for parent in parents:
+                parent.id = id_counter
+                id_counter += 1
+                print(f"get_parts: 分配ID {parent.id} 给顶层零件")
+            
+            print(f"get_parts: 树结构构建完成，返回 {len(parents)} 个顶层零件")
+            return parents
+        except Exception as e:
+            print(f"get_parts: 构建树结构时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
-    def start(self, progress_callback, display_callback) -> bool:
-        """Start the nesting process"""
+    def clean_polygon(self, polygon: List) -> Optional[List]:
+        """清理多边形"""
+        if not polygon:
+            return None
+    
+        try:
+            print(f"clean_polygon: 开始清理多边形，点数: {len(polygon)}")
+            
+            # 检查数据格式
+            for i, p in enumerate(polygon):
+                if 'x' not in p or 'y' not in p:
+                    print(f"clean_polygon: 点 {i} 格式错误，跳过")
+                    return None
+            
+            # 计算坐标范围
+            x_coords = [p['x'] for p in polygon]
+            y_coords = [p['y'] for p in polygon]
+            x_min, x_max = min(x_coords), max(x_coords)
+            y_min, y_max = min(y_coords), max(y_coords)
+            
+            # 计算合适的缩放因子
+            max_dim = max(x_max - x_min, y_max - y_min)
+            if max_dim > 0:
+                scale = min(1000000 / max_dim, self.config['clipperScale'])
+            else:
+                scale = self.config['clipperScale']
+            
+            # 构建 clipper 坐标
+            points_tuple = [(int(p['x'] * scale), 
+                            int(p['y'] * scale)) for p in polygon]
+            
+            # 检查多边形是否闭合
+            if (len(polygon) > 2 and 
+                (polygon[0]['x'] != polygon[-1]['x'] or polygon[0]['y'] != polygon[-1]['y'])):
+                # 添加闭合点
+                points_tuple.append(points_tuple[0])
+                print("clean_polygon: 添加闭合点")
+                
+            print(f"clean_polygon: 转换为clipper坐标，点数: {len(points_tuple)}")
+            
+            # 移除自交点
+            try:
+                simple = pyclipper.SimplifyPolygon(points_tuple, pyclipper.PFT_NONZERO)
+                print(f"clean_polygon: 简化多边形成功，得到 {len(simple)} 个多边形")
+                
+                if not simple:
+                    print("clean_polygon: 简化后无有效多边形")
+                    return None
+                    
+                # 找到最大的多边形
+                biggest = simple[0]
+                biggest_area = abs(pyclipper.Area(biggest))
+                for poly in simple[1:]:
+                    area = abs(pyclipper.Area(poly))
+                    if area > biggest_area:
+                        biggest = poly
+                        biggest_area = area
+                        
+                print(f"clean_polygon: 找到最大多边形，面积: {biggest_area}, 点数: {len(biggest)}")
+                
+                # 清理奇异点、重合点和边
+                tolerance = int(self.config['curveTolerance'] * scale)
+                if tolerance < 1:
+                    tolerance = 1  # 确保容差至少为1
+                    
+                clean = pyclipper.CleanPolygon(biggest, tolerance)
+                
+                if not clean:
+                    print("clean_polygon: 清理后无有效多边形")
+                    return None
+                    
+                print(f"clean_polygon: 清理多边形成功，点数: {len(clean)}")
+                
+                # 转回原始坐标
+                result = []
+                for p in clean:
+                    result.append({
+                        'x': p[0] / scale,
+                        'y': p[1] / scale
+                    })
+                    
+                print(f"clean_polygon: 转换回原始坐标成功，点数: {len(result)}")
+                
+                # 复制原始多边形的属性
+                if hasattr(polygon, 'source'):
+                    result = type('CustomList', (list,), {})(result)
+                    result.source = polygon.source
+                
+                # 创建一个自定义列表对象
+                if isinstance(result, list) and not hasattr(result, 'source'):
+                    result = type('CustomList', (list,), {})(result)
+                
+                return result
+                
+            except Exception as e:
+                print(f"clean_polygon: 处理多边形时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+            
+        except Exception as e:
+            print(f"clean_polygon: 清理多边形时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def polygon_offset(self, polygon: List, offset: float) -> List[List]:
+        """多边形偏移"""
+        if not offset or offset == 0:
+            return [polygon]
+            
+        # 使用pyclipper进行偏移
+        pc = pyclipper.PyclipperOffset()
+        scaled_poly = pyclipper.scale_to_clipper(polygon, self.config['clipperScale'])
+        pc.AddPath(scaled_poly, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
+        
+        # 执行偏移
+        solution = pc.Execute(offset * self.config['clipperScale'])
+        
+        # 转回原始坐标
+        result = []
+        for path in solution:
+            result.append(pyclipper.scale_from_clipper(path, self.config['clipperScale']))
+            
+        return result
+
+    def apply_placement(self, placements):
+        """
+        将布局应用到SVG文件并返回结果
+        """
+        from copy import deepcopy
+        from xml.dom import minidom
+
+        print("apply_placement: 开始生成SVG...")
+
+        # 创建一个新的SVG文档
+        doc = minidom.Document()
+        svg = doc.createElement('svg')
+        svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+        svg.setAttribute('version', '1.1')
+        doc.appendChild(svg)
+
+        # 设置视图框和尺寸
+        svg.setAttribute('viewBox', f"0 0 {self.bin_bounds['width']} {self.bin_bounds['height']}")
+        svg.setAttribute('width', str(self.bin_bounds['width']))
+        svg.setAttribute('height', str(self.bin_bounds['height']))
+
+        # 添加容器矩形
+        bin_element = doc.createElement('rect')
+        bin_element.setAttribute('x', '0')
+        bin_element.setAttribute('y', '0')
+        bin_element.setAttribute('width', str(self.bin_bounds['width']))
+        bin_element.setAttribute('height', str(self.bin_bounds['height']))
+        bin_element.setAttribute('fill', 'none')
+        bin_element.setAttribute('stroke', 'red')
+        svg.appendChild(bin_element)
+
+        # 验证放置结果
+        if not placements or not isinstance(placements, dict):
+            print("apply_placement: 无效的放置结果")
+            return doc.toxml()
+
+        paths = placements.get('paths', [])
+        placement_info = placements.get('placements', [])
+
+        print(f"apply_placement: 处理 {len(paths)} 个路径")
+
+        # 添加每个零件
+        for i, path in enumerate(paths):
+            if not path:  # 跳过空路径
+                print(f"apply_placement: 跳过空路径 {i}")
+                continue
+
+            # 获取变换参数
+            if i < len(placement_info):
+                info = placement_info[i]
+                x = info.get('x', 0)
+                y = info.get('y', 0)
+                rotation = info.get('rotation', 0)
+            else:
+                print(f"apply_placement: 路径 {i} 缺少放置信息")
+                continue
+
+            # 验证路径数据
+            if not isinstance(path, list):
+                print(f"apply_placement: 路径 {i} 格式无效")
+                continue
+
+            # 构建路径数据
+            d = []
+            try:
+                for j, point in enumerate(path):
+                    if not isinstance(point, dict) or 'x' not in point or 'y' not in point:
+                        print(f"apply_placement: 路径 {i} 点 {j} 格式无效")
+                        continue
+                    cmd = 'M' if j == 0 else 'L'
+                    d.append(f"{cmd} {point['x']},{point['y']}")
+                
+                if not d:  # 如果没有有效点，跳过
+                    print(f"apply_placement: 路径 {i} 没有有效点")
+                    continue
+
+                # 闭合路径
+                d.append('Z')
+
+                # 创建组元素
+                g = doc.createElement('g')
+                transform = f"translate({x},{y})"
+                if rotation != 0:
+                    transform += f" rotate({rotation})"
+                g.setAttribute('transform', transform)
+
+                # 创建路径元素
+                path_element = doc.createElement('path')
+                path_element.setAttribute('d', ' '.join(d))
+                path_element.setAttribute('fill', 'none')
+                path_element.setAttribute('stroke', 'black')
+                g.appendChild(path_element)
+
+                # 只有当路径有内容时才添加到SVG
+                svg.appendChild(g)
+                print(f"apply_placement: 成功添加路径 {i}")
+
+            except Exception as e:
+                print(f"apply_placement: 处理路径 {i} 时出错: {e}")
+                continue
+
+        print("apply_placement: SVG生成完成")
+        return doc.toxml()
+
+    def _flatten_tree(self, tree: List, hole: bool) -> List:
+        """展平树结构"""
+        flat = []
+        for node in tree:
+            flat.append(node)
+            node.hole = hole
+            if hasattr(node, 'children') and node.children:
+                flat.extend(self._flatten_tree(node.children, not hole))
+        return flat
+
+    def start(self, progress_callback: Callable, display_callback: Callable) -> bool:
+        """开始布局计算"""
         if not self.svg or not self.bin:
             return False
-
+        
+        # 设置工作状态为True
+        self.working = True
+        
         self.parts = list(self.svg.childNodes)
-        bin_index = self.parts.index(self.bin) if self.bin in self.parts else -1
-
-        if bin_index >= 0:
-            # Don't process bin as a part of the tree
+        try:
+            bin_index = self.parts.index(self.bin)
             self.parts.pop(bin_index)
-
-        # Build tree without bin
-        self.tree = self.get_parts(self.parts.copy())
-
-        # Offset tree with spacing
-        self._offset_tree(self.tree, 0.5 * self.config['spacing'], self.polygon_offset)
-
-        self.bin_polygon = svgparser.polygonify(self.bin)
+        except ValueError:
+            pass
+            
+        # 构建不含bin的树
+        self.tree = self.get_parts(self.parts[:])
+        
+        # 偏移处理
+        self._offset_tree(self.tree, 0.5 * self.config['spacing'])
+        
+        # 处理容器多边形
+        parser = SvgParser()
+        self.bin_polygon = parser.polygonify(self.bin)
         self.bin_polygon = self.clean_polygon(self.bin_polygon)
-
+        
         if not self.bin_polygon or len(self.bin_polygon) < 3:
             return False
-
-        self.bin_bounds = GeometryUtil.getPolygonBounds(self.bin_polygon)
-
+            
+        self.bin_bounds = GeometryUtil.get_polygon_bounds(self.bin_polygon)
+        
+        # 处理间距
         if self.config['spacing'] > 0:
             offset_bin = self.polygon_offset(self.bin_polygon, -0.5 * self.config['spacing'])
             if len(offset_bin) == 1:
                 self.bin_polygon = offset_bin[0]
-
+                
+        if isinstance(self.bin_polygon, list) and not hasattr(self.bin_polygon, 'id'):
+            # 创建可扩展的列表
+            CustomList = type('CustomList', (list,), {})
+            self.bin_polygon = CustomList(self.bin_polygon)
         self.bin_polygon.id = -1
-
-        # Put bin on origin
-        x_bin_min = min(point['x'] for point in self.bin_polygon)
-        y_bin_min = min(point['y'] for point in self.bin_polygon)
-
-        for i in range(len(self.bin_polygon)):
-            self.bin_polygon[i]['x'] -= x_bin_min
-            self.bin_polygon[i]['y'] -= y_bin_min
-
-        x_bin_max = max(point['x'] for point in self.bin_polygon)
-        y_bin_max = max(point['y'] for point in self.bin_polygon)
-
-        self.bin_polygon.width = x_bin_max - x_bin_min
-        self.bin_polygon.height = y_bin_max - y_bin_min
-
-        # All paths need to have the same winding direction
-        if GeometryUtil.polygonArea(self.bin_polygon) > 0:
+        
+        # 移动到原点
+        bounds = GeometryUtil.get_polygon_bounds(self.bin_polygon)
+        for point in self.bin_polygon:
+            point['x'] -= bounds['x']
+            point['y'] -= bounds['y']
+            
+        if isinstance(self.bin_polygon, list) and not hasattr(self.bin_polygon, 'width'):
+            CustomList = type('CustomList', (list,), {})
+            self.bin_polygon = CustomList(self.bin_polygon)
+        self.bin_polygon.width = bounds['width']
+        self.bin_polygon.height = bounds['height']
+        
+        # 确保逆时针方向
+        if GeometryUtil.polygon_area(self.bin_polygon) > 0:
             self.bin_polygon.reverse()
-
-        # Remove duplicate endpoints, ensure counterclockwise winding direction
-        for i in range(len(self.tree)):
-            start = self.tree[i][0]
-            end = self.tree[i][-1]
-
-            if start == end or (GeometryUtil.almostEqual(start['x'], end['x']) and
-                                GeometryUtil.almostEqual(start['y'], end['y'])):
-                self.tree[i].pop()
-
-            if GeometryUtil.polygonArea(self.tree[i]) > 0:
-                self.tree[i].reverse()
-
+            
+        # 处理所有路径
+        for path in self.tree:
+            # 移除重复端点
+            while (len(path) > 1 and 
+                   GeometryUtil.almost_equal(path[0]['x'], path[-1]['x']) and 
+                   GeometryUtil.almost_equal(path[0]['y'], path[-1]['y'])):
+                path.pop()
+                
+            # 确保逆时针方向
+            if GeometryUtil.polygon_area(path) > 0:
+                path.reverse()
+                
         self.working = False
-
-        # Use a thread to simulate the interval in JavaScript
-        def worker_function():
-            while self.working:
-                progress_callback(self.progress)
-                time.sleep(0.1)  # 100ms interval as in original JS
-
-        self.working = True
-        self.worker_timer = threading.Thread(target=worker_function)
-        self.worker_timer.daemon = True
-        self.worker_timer.start()
-
-        # Launch workers to start the nesting process
-        self.launch_workers(self.tree, self.bin_polygon, self.config, progress_callback, display_callback)
-
+        
+        # 启动工作进程
+        def worker():
+            if not self.working:
+                self.launch_workers(self.tree, self.bin_polygon, self.config,
+                                 progress_callback, display_callback)
+                self.working = True
+            progress_callback(self.progress)
+            
+        self.worker_timer = worker
+        worker()  # 立即开始第一次计算
+        
         return True
 
-    def _offset_tree(self, t: List[Any], offset: float, offset_function: callable) -> None:
-        """Offset a tree of polygons recursively"""
-        for i in range(len(t)):
-            offset_paths = offset_function(t[i], offset)
+    def _offset_tree(self, tree: List, offset: float):
+        """递归偏移树结构"""
+        for i, path in enumerate(tree):
+            offset_paths = self.polygon_offset(path, offset)
             if len(offset_paths) == 1:
-                # Replace array items in place
-                t[i][:] = offset_paths[0]
+                tree[i][:] = offset_paths[0]
+                
+            if hasattr(path, 'children') and path.children:
+                self._offset_tree(path.children, -offset)
 
-            if hasattr(t[i], 'childNodes') and len(t[i].childNodes) > 0:
-                self._offset_tree(t[i].childNodes, -offset, offset_function)
-
-    def launch_workers(self, tree: List[Any], bin_polygon: List[Dict[str, float]],
-                       config: Dict[str, Any], progress_callback, display_callback) -> None:
-        """Launch workers for placement calculation"""
-
-        def shuffle(array: List[Any]) -> List[Any]:
-            """Shuffle an array in place"""
-            array_copy = array.copy()
-            for i in range(len(array_copy) - 1, 0, -1):
-                j = random.randint(0, i)
-                array_copy[i], array_copy[j] = array_copy[j], array_copy[i]
-            return array_copy
-
-        if self.GA is None:
-            # Initiate new GA
-            adam = tree.copy()
-
-            # Seed with decreasing area
-            adam.sort(key=lambda x: -abs(GeometryUtil.polygonArea(x)))
-
-            self.GA = GeneticAlgorithm(adam, bin_polygon, config)
-
-        individual = None
-
-        # Evaluate all members of the population
-        for i in range(len(self.GA.population)):
-            if not hasattr(self.GA.population[i], 'fitness') or self.GA.population[i].fitness is None:
-                individual = self.GA.population[i]
-                break
-
-        if individual is None:
-            # All individuals have been evaluated, start next generation
-            self.GA.generation()
-            individual = self.GA.population[1]
-
-        place_list = individual.placement
-        rotations = individual.rotation
-
-        ids = [place_list[i].id for i in range(len(place_list))]
-
-        nfp_pairs = []
-        new_cache = {}
-
-        for i in range(len(place_list)):
-            part = place_list[i]
-            key = {'A': bin_polygon.id, 'B': part.id, 'inside': True,
-                   'Arotation': 0, 'Brotation': rotations[i]}
-            key_str = json.dumps(key)
-
-            if key_str not in self.nfp_cache:
-                nfp_pairs.append({'A': bin_polygon, 'B': part, 'key': key})
-            else:
-                new_cache[key_str] = self.nfp_cache[key_str]
-
-            for j in range(i):
-                placed = place_list[j]
-                key = {'A': placed.id, 'B': part.id, 'inside': False,
-                       'Arotation': rotations[j], 'Brotation': rotations[i]}
-                key_str = json.dumps(key)
-
-                if key_str not in self.nfp_cache:
-                    nfp_pairs.append({'A': placed, 'B': part, 'key': key})
-                else:
-                    new_cache[key_str] = self.nfp_cache[key_str]
-
-        # Only keep cache for one cycle
-        self.nfp_cache = new_cache
-
-        worker = placementworker.PlacementWorker(bin_polygon, place_list.copy(), ids, rotations, config, self.nfp_cache)
-
-        # Process NFP pairs - in Python we can use multiprocessing for this
-        # For simplicity, we'll process them sequentially for now
-        self.progress = 0
-        spawn_count = 0
-        generated_nfp = []
-
-        # Function to process a single NFP pair
-        def process_nfp_pair(pair):
-            nonlocal spawn_count
-            spawn_count += 1
-            self.progress = spawn_count / len(nfp_pairs)
-
-            if not pair:
-                return None
-
-            search_edges = config['explore_concave']
-            use_holes = config['use_holes']
-
-            A = GeometryUtil.rotatePolygon(pair['A'], pair['key']['Arotation'])
-            B = GeometryUtil.rotatePolygon(pair['B'], pair['key']['Brotation'])
-
-            nfp = None
-
-            if pair['key']['inside']:
-                if GeometryUtil.isRectangle(A, 0.001):
-                    nfp = GeometryUtil.noFitPolygonRectangle(A, B)
-                else:
-                    nfp = GeometryUtil.noFitPolygon(A, B, True, search_edges)
-
-                # Ensure all interior NFPs have the same winding direction
-                if nfp and len(nfp) > 0:
-                    for i in range(len(nfp)):
-                        if GeometryUtil.polygonArea(nfp[i]) > 0:
-                            nfp[i].reverse()
-                else:
-                    # Warning on null inner NFP
-                    print(f"NFP Warning: {pair['key']}")
-            else:
-                if search_edges:
-                    nfp = GeometryUtil.noFitPolygon(A, B, False, search_edges)
-                else:
-                    nfp = minkowski_difference(A, B)
-
-                # Sanity check
-                if not nfp or len(nfp) == 0:
-                    print(f"NFP Error: {pair['key']}")
-                    print(f"A: {json.dumps(A)}")
-                    print(f"B: {json.dumps(B)}")
-                    return None
-
-                for i in range(len(nfp)):
-                    if not search_edges or i == 0:  # Only the first NFP is guaranteed to pass sanity check
-                        if abs(GeometryUtil.polygonArea(nfp[i])) < abs(GeometryUtil.polygonArea(A)):
-                            print(f"NFP Area Error: {abs(GeometryUtil.polygonArea(nfp[i]))}, {pair['key']}")
-                            print(f"NFP: {json.dumps(nfp[i])}")
-                            print(f"A: {json.dumps(A)}")
-                            print(f"B: {json.dumps(B)}")
-                            nfp.pop(i)
-                            return None
-
-                if len(nfp) == 0:
-                    return None
-
-                # For outer NFPs, the first is guaranteed to be the largest
-                for i in range(len(nfp)):
-                    if GeometryUtil.polygonArea(nfp[i]) > 0:
-                        nfp[i].reverse()
-
-                    if i > 0:
-                        if GeometryUtil.pointInPolygon(nfp[i][0], nfp[0]):
-                            if GeometryUtil.polygonArea(nfp[i]) < 0:
-                                nfp[i].reverse()
-
-                # Generate NFPs for children (holes of parts) if any exist
-                if use_holes and hasattr(A, 'childNodes') and len(A.childNodes) > 0:
-                    B_bounds = GeometryUtil.getPolygonBounds(B)
-
-                    for i in range(len(A.childNodes)):
-                        A_bounds = GeometryUtil.getPolygonBounds(A.childNodes[i])
-
-                        # No need to find NFP if B's bounding box is too big
-                        if A_bounds['width'] > B_bounds['width'] and A_bounds['height'] > B_bounds['height']:
-                            cnfp = GeometryUtil.noFitPolygon(A.childNodes[i], B, True, search_edges)
-
-                            # Ensure all interior NFPs have the same winding direction
-                            if cnfp and len(cnfp) > 0:
-                                for j in range(len(cnfp)):
-                                    if GeometryUtil.polygonArea(cnfp[j]) < 0:
-                                        cnfp[j].reverse()
-                                    nfp.append(cnfp[j])
-
-            return {'key': pair['key'], 'value': nfp}
-
-        # Process NFP pairs
-        for pair in nfp_pairs:
-            result = process_nfp_pair(pair)
-            if result:
-                generated_nfp.append(result)
-
-        # Update NFP cache with generated NFPs
-        if generated_nfp:
-            for nfp in generated_nfp:
-                if nfp:
-                    key_str = json.dumps(nfp['key'])
-                    self.nfp_cache[key_str] = nfp['value']
-
-        worker.nfp_cache = self.nfp_cache
-
-        # Place paths
-        placements = [worker.placePaths([place_list.copy()])]
-
-        if not placements or len(placements) == 0:
-            return
-
-        individual.fitness = placements[0]['fitness']
-        best_result = placements[0]
-
-        for i in range(1, len(placements)):
-            if placements[i]['fitness'] < best_result['fitness']:
-                best_result = placements[i]
-
-        if not self.best or best_result['fitness'] < self.best['fitness']:
-            self.best = best_result
-
-            placed_area = 0
-            total_area = 0
-            num_parts = len(place_list)
-            num_placed_parts = 0
-
-            for i in range(len(self.best['placements'])):
-                total_area += abs(GeometryUtil.polygonArea(bin_polygon))
-                for j in range(len(self.best['placements'][i])):
-                    placed_area += abs(GeometryUtil.polygonArea(
-                        tree[self.best['placements'][i][j].id]
-                    ))
-                    num_placed_parts += 1
-
-            display_callback(
-                self.apply_placement(self.best['placements']),
-                placed_area / total_area,
-                num_placed_parts,
-                num_parts
+    def launch_workers(self, tree, bin_polygon, config, progress_callback, display_callback):
+        """启动工作进程"""
+        print("launch_workers: 开始...")
+        
+        # 验证输入
+        if not tree or not bin_polygon:
+            print("launch_workers: 输入无效")
+            return False
+        
+        # 清理容器多边形
+        bin_polygon = GeometryUtil.clean_polygon(bin_polygon)
+        if not bin_polygon:
+            print("launch_workers: 容器多边形无效")
+            return False
+        
+        # 计算容器面积
+        bin_area = abs(GeometryUtil.polygon_area(bin_polygon))
+        if bin_area < 1e-6:
+            print("launch_workers: 容器面积过小")
+            return False
+        
+        print(f"launch_workers: 容器多边形有效，面积={bin_area}")
+        
+        # 计算所有路径的总面积
+        total_area = 0
+        valid_paths = []
+        for path in tree:
+            if hasattr(path, 'polygon'):
+                path_area = abs(GeometryUtil.polygon_area(path.polygon))
+                if path_area > 1e-6:
+                    total_area += path_area
+                    valid_paths.append(path)
+                
+        if not valid_paths:
+            print("launch_workers: 没有有效的路径")
+            return False
+        
+        print(f"launch_workers: 有效路径数量={len(valid_paths)}，总面积={total_area}")
+        
+        # 计算NFP缓存
+        try:
+            nfp_cache = self.calculate_nfp_cache(bin_polygon, valid_paths)
+            if not nfp_cache:
+                print("launch_workers: NFP缓存计算失败")
+                return False
+            print(f"launch_workers: 成功计算 {len(nfp_cache)} 个NFP")
+        except Exception as e:
+            print(f"launch_workers: 计算NFP缓存时出错: {e}")
+            return False
+        
+        # 创建放置工作器
+        try:
+            worker = PlacementWorker(
+                bin_polygon=bin_polygon,
+                paths=valid_paths,
+                ids=[i for i in range(len(valid_paths))],
+                rotations=[0] * len(valid_paths),
+                config=config,
+                nfp_cache=nfp_cache
             )
-        else:
-            display_callback()
-
-        self.working = False
-
-    def get_parts(self, paths: List[Any]) -> List[List[Dict[str, float]]]:
-        """Get parts from paths as polygons"""
-        polygons = []
-
-        for i in range(len(paths)):
-            poly = svgparser.polygonify(paths[i])
-            poly = self.clean_polygon(poly)
-
-            if (poly and len(poly) > 2 and
-                    abs(GeometryUtil.polygonArea(poly)) >
-                    self.config['curve_tolerance'] * self.config['curve_tolerance']):
-                poly.source = i
-                polygons.append(poly)
-
-        # Turn the list into a tree
-        self._to_tree(polygons)
-
-        return polygons
-
-    def _to_tree(self, polygon_list: List[Any], id_start: int = 0) -> int:
-        """Convert a list of polygons to a tree structure"""
-        parents = []
-
-        # Assign a unique id to each leaf
-        id_counter = id_start
-
-        for i in range(len(polygon_list)):
-            p = polygon_list[i]
-
-            is_child = False
-            for j in range(len(polygon_list)):
-                if j == i:
-                    continue
-
-                if GeometryUtil.pointInPolygon(p[0], polygon_list[j]):
-                    if not hasattr(polygon_list[j], 'children'):
-                        polygon_list[j].children = []
-
-                    polygon_list[j].children.append(p)
-                    p.parent = polygon_list[j]
-                    is_child = True
-                    break
-
-            if not is_child:
-                parents.append(p)
-
-        # Remove children from the list
-        i = 0
-        while i < len(polygon_list):
-            if polygon_list[i] not in parents:
-                polygon_list.pop(i)
-            else:
-                i += 1
-
-        for i in range(len(parents)):
-            parents[i].id = id_counter
-            id_counter += 1
-
-        for i in range(len(parents)):
-            if hasattr(parents[i], 'children') and parents[i].children:
-                id_counter = self._to_tree(parents[i].children, id_counter)
-
-        return id_counter
-
-    def polygon_offset(self, polygon: List[Dict[str, float]], offset: float) -> List[List[Dict[str, float]]]:
-        """Offset a polygon by a given amount"""
-        if not offset or offset == 0 or GeometryUtil.almostEqual(offset, 0):
-            return [polygon]
-
-        # 使用PyClipper库执行多边形偏移
-        p = self.svg_to_clipper(polygon)
-
-        # 创建PyClipper偏移对象
-        miter_limit = 2
-        co = pyclipper.PyclipperOffset(miter_limit, self.config['curve_tolerance'] * self.config['clipper_scale'])
-        co.AddPath(p, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
-
-        # 执行偏移并获取结果
-        new_paths = co.Execute(offset * self.config['clipper_scale'])
-
-        result = []
-        for i in range(len(new_paths)):
-            result.append(self.clipper_to_svg(new_paths[i]))
-
-        return result
-
-    def clean_polygon(self, polygon: List[Dict[str, float]]) -> List[Dict[str, float]]:
-        """Clean a polygon by removing self-intersections and smoothing"""
-        if not polygon or len(polygon) < 3:
-            return None
-
-        p = self.svg_to_clipper(polygon)
-
-        # 使用PyClipper简化多边形，去除自相交
-        pc = pyclipper.Pyclipper()
-        pc.AddPath(p, pyclipper.PT_SUBJECT, True)
-        simple = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
-
-        if not simple or len(simple) == 0:
-            return None
-
-        # 找到面积最大的多边形
-        biggest = simple[0]
-        biggest_area = abs(pyclipper.Area(biggest))
-
-        for i in range(1, len(simple)):
-            area = abs(pyclipper.Area(simple[i]))
-            if area > biggest_area:
-                biggest = simple[i]
-                biggest_area = area
-
-        # 清理奇异点、重合点和边
-        clean = pyclipper.CleanPolygon(
-            biggest, self.config['curve_tolerance'] * self.config['clipper_scale']
-        )
-
-        if not clean or len(clean) == 0:
-            return None
-
-        return self.clipper_to_svg(clean)
-
-    def svg_to_clipper(self, polygon: List[Dict[str, float]]) -> List[List[int]]:
-        """Convert SVG coordinates to Clipper coordinates"""
-        # PyClipper需要的是整数坐标，所以先放大再取整
-        clip = []
-        for point in polygon:
-            clip.append([
-                int(point['x'] * self.config['clipper_scale']),
-                int(point['y'] * self.config['clipper_scale'])
-            ])
-
-        return clip
-
-    def clipper_to_svg(self, polygon: List[List[int]]) -> List[Dict[str, float]]:
-        """Convert Clipper coordinates to SVG coordinates"""
-        normal = []
-        for point in polygon:
-            normal.append({
-                'x': point[0] / self.config['clipper_scale'],
-                'y': point[1] / self.config['clipper_scale']
-            })
-
-        return normal
-
-    def apply_placement(self, placement: List[List[Dict[str, Any]]]) -> List[Any]:
-        """Apply the placement to SVG elements"""
-        from lxml import etree
-        from copy import deepcopy
-
-        # 创建深拷贝而不是使用cloneNode
-        clone = []
-        for i in range(len(self.parts)):
-            clone.append(deepcopy(self.parts[i]))
-
-        svg_list = []
-
-        for i in range(len(placement)):
-            # 创建新的SVG元素
-            new_svg = deepcopy(self.svg)
-
-            # 设置viewBox和尺寸
-            new_svg.set('viewBox', f'0 0 {self.bin_bounds["width"]} {self.bin_bounds["height"]}')
-            new_svg.set('width', f'{self.bin_bounds["width"]}px')
-            new_svg.set('height', f'{self.bin_bounds["height"]}px')
-
-            # 克隆bin元素
-            bin_clone = deepcopy(self.bin)
-            bin_clone.set('class', 'bin')
-            bin_clone.set('transform', f'translate({-self.bin_bounds["x"]} {-self.bin_bounds["y"]})')
-            new_svg.append(bin_clone)
-
-            for j in range(len(placement[i])):
-                p = placement[i][j]
-                part = self.tree[p.id]
-
-                # 创建变换组
-                part_group = etree.Element('{http://www.w3.org/2000/svg}g')
-                part_group.set('transform', f'translate({p.x} {p.y}) rotate({p.rotation})')
-                part_group.append(clone[part.source])
-
-                if hasattr(part, 'children') and len(part.children) > 0:
-                    flattened = self._flatten_tree(part.children, True)
-                    for k in range(len(flattened)):
-                        c = clone[flattened[k].source]
-                        # 添加类以指示孔洞
-                        if flattened[k].hole:
-                            class_attr = c.get('class', '')
-                            if 'hole' not in class_attr:
-                                c.set('class', (class_attr + ' hole').strip())
-                        part_group.append(c)
-
-                new_svg.append(part_group)
-
-            svg_list.append(new_svg)
-
-        return svg_list
-
-    def _flatten_tree(self, t: List[Any], hole: bool) -> List[Any]:
-        """Flatten a tree into a list"""
-        flat = []
-        for i in range(len(t)):
-            flat.append(t[i])
-            t[i].hole = hole
-            if hasattr(t[i], 'children') and len(t[i].children) > 0:
-                flat.extend(self._flatten_tree(t[i].children, not hole))
-
-        return flat
-
-    def stop(self) -> None:
-        """Stop the nesting process"""
-        self.working = False
-        if self.worker_timer and self.worker_timer.is_alive():
-            # Can't directly stop a thread in Python, but setting working to False
-            # will make it exit on next iteration
-            self.worker_timer = None
-
-
-def minkowski_difference(A: List[Dict[str, float]], B: List[Dict[str, float]]) -> List[List[Dict[str, float]]]:
-    """Calculate the Minkowski difference between polygons A and B"""
-    # 将A和B转换为PyClipper可用的坐标格式（整数坐标）
-    scale = 10000000  # 坐标缩放因子
-
-    # 转换A到PyClipper格式
-    Ac = []
-    for point in A:
-        Ac.append([int(point['x'] * scale), int(point['y'] * scale)])
-
-    # 转换B到PyClipper格式并取负值（Minkowski差需要B取负）
-    Bc = []
-    for point in B:
-        Bc.append([int(-point['x'] * scale), int(-point['y'] * scale)])
-
-    # 使用PyClipper计算Minkowski和
-    solution = pyclipper.MinkowskiSum(Ac, Bc, True)
-    clipper_nfp = None
-
-    # 找出面积最大的多边形
-    largest_area = None
-    for i in range(len(solution)):
-        n = []
-        for point in solution[i]:
-            n.append({'x': point[0] / scale, 'y': point[1] / scale})
-
-        sarea = GeometryUtil.polygonArea(n)
-        if largest_area is None or largest_area > sarea:
-            clipper_nfp = n
-            largest_area = sarea
-
-    # 将B[0]添加到所有点
-    for i in range(len(clipper_nfp)):
-        clipper_nfp[i]['x'] += B[0]['x']
-        clipper_nfp[i]['y'] += B[0]['y']
-
-    return [clipper_nfp]
-
-
-class GeneticAlgorithm:
-    """Genetic algorithm for optimizing nesting"""
-
-    def __init__(self, adam: List[Any], bin_polygon: List[Dict[str, float]], config: Dict[str, Any]):
-        self.config = config or {
-            'population_size': 10,
-            'mutation_rate': 10,
-            'rotations': 4
-        }
-        self.bin_bounds = geometryutil.getPolygonBounds(bin_polygon)
-
-        # Population is an array of individuals
-        # Each individual represents the order of insertion and rotation angle
-        angles = []
-        for i in range(len(adam)):
-            angles.append(self.random_angle(adam[i]))
-
-        self.population = [{'placement': adam, 'rotation': angles}]
-
-        while len(self.population) < config['population_size']:
-            mutant = self.mutate(self.population[0])
-            self.population.append(mutant)
-
-    def random_angle(self, part: List[Dict[str, float]]) -> float:
-        """Get a random angle for insertion"""
-        angle_list = [i * (360 / max(self.config['rotations'], 1))
-                      for i in range(max(self.config['rotations'], 1))]
-
-        # Shuffle the angle list
-        random.shuffle(angle_list)
-
-        for angle in angle_list:
-            rotated_part = geometryutil.rotatePolygon(part, angle)
-
-            # Don't use angles where the part doesn't fit in the bin
-            if rotated_part.width < self.bin_bounds['width'] and rotated_part.height < self.bin_bounds['height']:
-                return angle
-
-        return 0
-
-    def mutate(self, individual: Dict[str, Any]) -> Dict[str, Any]:
-        """Mutate an individual with the given mutation rate"""
-        clone = {
-            'placement': individual['placement'].copy(),
-            'rotation': individual['rotation'].copy()
-        }
-
-        for i in range(len(clone['placement'])):
-            # Swap with next part with probability based on mutation rate
-            if random.random() < 0.01 * self.config['mutation_rate']:
-                j = i + 1
-                if j < len(clone['placement']):
-                    clone['placement'][i], clone['placement'][j] = clone['placement'][j], clone['placement'][i]
-
-            # Change rotation with probability based on mutation rate
-            if random.random() < 0.01 * self.config['mutation_rate']:
-                clone['rotation'][i] = self.random_angle(clone['placement'][i])
-
-        return clone
-
-    def mate(self, male: Dict[str, Any], female: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Single point crossover between two individuals"""
-        cutpoint = round(min(max(random.random(), 0.1), 0.9) * (len(male['placement']) - 1))
-
-        gene1 = male['placement'][:cutpoint]
-        rot1 = male['rotation'][:cutpoint]
-
-        gene2 = female['placement'][:cutpoint]
-        rot2 = female['rotation'][:cutpoint]
-
-        def contains(gene, id_val):
-            """Check if a gene contains an id"""
-            for g in gene:
-                if g.id == id_val:
-                    return True
+        except Exception as e:
+            print(f"launch_workers: 创建放置工作器时出错: {e}")
+            return False
+        
+        # 执行放置计算
+        try:
+            # 设置超时时间（秒）
+            timeout = 3  # 5分钟
+            start_time = time.time()
+            
+            # 执行放置计算
+            placed, unplaced = worker.place_paths(bin_polygon, valid_paths)
+            
+            # 检查是否超时
+            if time.time() - start_time > timeout:
+                print("launch_workers: 放置计算超时")
+                return False
+            
+            if not placed:
+                print("launch_workers: 放置计算失败")
+                return False
+            
+            # 计算效率
+            placed_area = sum(abs(GeometryUtil.polygon_area(path['path'])) for path in placed)
+            efficiency = placed_area / bin_area if bin_area > 0 else 0
+            
+            print(f"launch_workers: 放置完成，效率={efficiency:.2%}")
+            print(f"launch_workers: 已放置 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
+            
+            # 构建结果
+            result = {
+                'placements': [],
+                'paths': [],
+                'unplaced': unplaced,
+                'efficiency': efficiency
+            }
+            
+            # 添加每个已放置的路径
+            for i, placed_path in enumerate(placed):
+                # 获取原始路径
+                original_path = valid_paths[i]
+                
+                # 计算变换参数
+                dx = placed_path['path'][0]['x'] - original_path.polygon[0]['x']
+                dy = placed_path['path'][0]['y'] - original_path.polygon[0]['y']
+                
+                # 添加放置信息
+                result['placements'].append({
+                    'x': dx,
+                    'y': dy,
+                    'rotation': placed_path.get('rotation', 0),
+                    'id': i
+                })
+                
+                # 添加路径数据
+                result['paths'].append(placed_path['path'])
+            
+            # 保存结果
+            self.best = result
+            
+            # 更新进度和显示
+            if progress_callback:
+                progress_callback(1.0)
+            if display_callback:
+                display_callback(result=result, efficiency=efficiency, 
+                               placed=len(placed), total=len(valid_paths))
+            
+            return True
+            
+        except Exception as e:
+            print(f"launch_workers: 执行放置计算时出错: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
-        # Complete gene1 with missing elements from female
-        for i in range(len(female['placement'])):
-            if not contains(gene1, female['placement'][i].id):
-                gene1.append(female['placement'][i])
-                rot1.append(female['rotation'][i])
+    def stop(self):
+        """停止布局计算"""
+        self.working = False
+        self.worker_timer = None
 
-        # Complete gene2 with missing elements from male
-        for i in range(len(male['placement'])):
-            if not contains(gene2, male['placement'][i].id):
-                gene2.append(male['placement'][i])
-                rot2.append(male['rotation'][i])
+    def calculate_nfp_cache(self, bin_polygon: List[Dict], paths: List[Dict]) -> Dict:
+        """计算NFP缓存"""
+        print("calculate_nfp_cache: 开始计算...")
+        nfp_cache = {}
+        
+        # 验证输入
+        if not bin_polygon or not paths:
+            print("calculate_nfp_cache: 输入无效")
+            return nfp_cache
+        
+        # 清理容器多边形
+        bin_polygon = GeometryUtil.clean_polygon(bin_polygon)
+        if not bin_polygon:
+            print("calculate_nfp_cache: 容器多边形无效")
+            return nfp_cache
+        
+        # 计算容器面积
+        bin_area = abs(GeometryUtil.polygon_area(bin_polygon))
+        if bin_area < 1e-6:
+            print("calculate_nfp_cache: 容器面积过小")
+            return nfp_cache
+        
+        print(f"calculate_nfp_cache: 容器多边形有效，面积={bin_area}")
+        
+        # 计算每个路径的NFP
+        for i, path in enumerate(paths):
+            print(f"calculate_nfp_cache: 处理路径 {i}")
+            
+            # 验证路径
+            if not hasattr(path, 'polygon'):
+                print(f"calculate_nfp_cache: 路径 {i} 没有polygon属性")
+                continue
+            
+            # 清理路径多边形
+            path_polygon = GeometryUtil.clean_polygon(path.polygon)
+            if not path_polygon:
+                print(f"calculate_nfp_cache: 路径 {i} 无效")
+                continue
+            
+            # 计算路径面积
+            path_area = abs(GeometryUtil.polygon_area(path_polygon))
+            if path_area < 1e-6:
+                print(f"calculate_nfp_cache: 路径 {i} 面积过小")
+                continue
+            
+            print(f"calculate_nfp_cache: 路径 {i} 有效，面积={path_area}")
+            
+            # 计算与容器的NFP
+            try:
+                # 确保多边形闭合
+                if len(path_polygon) >= 2 and (not GeometryUtil.almost_equal(path_polygon[0]['x'], path_polygon[-1]['x']) or 
+                                             not GeometryUtil.almost_equal(path_polygon[0]['y'], path_polygon[-1]['y'])):
+                    path_polygon.append(path_polygon[0])
+                    
+                # 尝试不同的起始点
+                for offset in range(len(path_polygon)):
+                    rotated_polygon = path_polygon[offset:] + path_polygon[:offset]
+                    nfp = GeometryUtil.no_fit_polygon(bin_polygon, rotated_polygon, inside=True)
+                    if nfp and len(nfp) >= 3:
+                        # 确保NFP闭合
+                        if not (GeometryUtil.almost_equal(nfp[0]['x'], nfp[-1]['x']) and 
+                               GeometryUtil.almost_equal(nfp[0]['y'], nfp[-1]['y'])):
+                            nfp.append(nfp[0])
+                            
+                        key = f"bin,{i}"
+                        nfp_cache[key] = nfp
+                        print(f"calculate_nfp_cache: 成功计算路径 {i} 与容器的NFP")
+                        break
+                else:
+                    print(f"calculate_nfp_cache: 路径 {i} 与容器的NFP计算失败")
+            except Exception as e:
+                print(f"calculate_nfp_cache: 计算路径 {i} 与容器的NFP时出错: {e}")
+            
+            # 计算与其他路径的NFP
+            for j in range(i + 1, len(paths)):
+                other_path = paths[j]
+                if not hasattr(other_path, 'polygon'):
+                    continue
+                
+                other_polygon = GeometryUtil.clean_polygon(other_path.polygon)
+                if not other_polygon:
+                    continue
+                    
+                # 确保多边形闭合
+                if len(other_polygon) >= 2 and (not GeometryUtil.almost_equal(other_polygon[0]['x'], other_polygon[-1]['x']) or 
+                                              not GeometryUtil.almost_equal(other_polygon[0]['y'], other_polygon[-1]['y'])):
+                    other_polygon.append(other_polygon[0])
+                
+                try:
+                    # 尝试不同的起始点
+                    for offset in range(len(other_polygon)):
+                        rotated_polygon = other_polygon[offset:] + other_polygon[:offset]
+                        nfp = GeometryUtil.no_fit_polygon(path_polygon, rotated_polygon, inside=False)
+                        if nfp and len(nfp) >= 3:
+                            # 确保NFP闭合
+                            if not (GeometryUtil.almost_equal(nfp[0]['x'], nfp[-1]['x']) and 
+                                   GeometryUtil.almost_equal(nfp[0]['y'], nfp[-1]['y'])):
+                                nfp.append(nfp[0])
+                                
+                            key = f"{i},{j}"
+                            nfp_cache[key] = nfp
+                            print(f"calculate_nfp_cache: 成功计算路径 {i} 和 {j} 之间的NFP")
+                            break
+                    else:
+                        print(f"calculate_nfp_cache: 路径 {i} 和 {j} 之间的NFP计算失败")
+                except Exception as e:
+                    print(f"calculate_nfp_cache: 计算路径 {i} 和 {j} 之间的NFP时出错: {e}")
+        
+        print(f"calculate_nfp_cache: 完成，共计算 {len(nfp_cache)} 个NFP")
+        return nfp_cache
 
-        return [
-            {'placement': gene1, 'rotation': rot1},
-            {'placement': gene2, 'rotation': rot2}
-        ]
+# 在 svgnest.py 文件末尾添加以下代码
 
-    def generation(self) -> None:
-        """Create a new generation using selection, crossover and mutation"""
-        # Sort individuals by fitness (lower is better)
-        self.population.sort(key=lambda x: x.fitness if hasattr(x, 'fitness') else float('inf'))
+    def read_svg_file(file_path: str) -> str:
+        """读取SVG文件内容"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"Error reading SVG file: {e}")
+            return ""
 
-        # Fittest individual is preserved in the new generation (elitism)
-        new_population = [self.population[0]]
+    def progress_callback(progress: float):
+        """进度回调函数"""
+        print(f"Progress: {progress * 100:.2f}%")
 
-        while len(new_population) < len(self.population):
-            male = self.random_weighted_individual()
-            female = self.random_weighted_individual(male)
-
-            # Each mating produces two children
-            children = self.mate(male, female)
-
-            # Slightly mutate children
-            new_population.append(self.mutate(children[0]))
-
-            if len(new_population) < len(self.population):
-                new_population.append(self.mutate(children[1]))
-
-        self.population = new_population
-
-    def random_weighted_individual(self, exclude: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Returns a random individual from the population, weighted to the front of the list"""
-        pop = self.population.copy()
-
-        if exclude and exclude in pop:
-            pop.remove(exclude)
-
-        rand = random.random()
-
-        lower = 0
-        weight = 1 / len(pop)
-        upper = weight
-
-        for i in range(len(pop)):
-            # If the random number falls between lower and upper bounds, select this individual
-            if lower < rand < upper:
-                return pop[i]
-            lower = upper
-            upper += 2 * weight * ((len(pop) - i) / len(pop))
-
-        return pop[0]
-
+    def display_callback(result=None, efficiency=None, placed=None, total=None):
+        """显示回调函数"""
+        if result:
+            print(f"Placement efficiency: {efficiency * 100:.2f}%")
+            print(f"Placed parts: {placed}/{total}")
 
 def main():
-    """Example usage of SvgNest"""
-    nest = SvgNest()
-
-    # Load SVG file - replace with actual file loading in your implementation
-    with open('input.svg', 'r') as file:
-        svg_input = file.read()
-
-    # Parse SVG
-    svg = nest.parse_svg(svg_input)
-
-    # Set bin element - in practice you would select the appropriate element
-    bin_element = svg['childNodes'][0]  # Example, would be selected in practice
-    nest.set_bin(bin_element)
-
-    # Configure nesting parameters
-    nest.config.update({
-        'spacing': 2,
+    """主函数"""
+    import sys
+    import os
+    
+    # 检查命令行参数
+    if len(sys.argv) < 2:
+        print("Usage: python svgnest.py <input.svg>")
+        return
+        
+    input_file = sys.argv[1]
+    print(f"Processing file: {input_file}")
+    
+    if not os.path.exists(input_file):
+        print(f"Error: File {input_file} not found")
+        return
+        
+    # 读取SVG文件
+    print("Reading SVG file...")
+    with open(input_file, 'r', encoding='utf-8') as f:
+        svg_content = f.read()
+    if not svg_content:
+        print("Error: Failed to read SVG file")
+        return
+    print(f"Successfully read {len(svg_content)} characters from {input_file}")
+        
+    # 创建SvgNest实例
+    print("Initializing SvgNest...")
+    nester = SvgNest()
+    
+    # 配置参数
+    config = {
+        'spacing': 0,
         'rotations': 4,
-        'population_size': 10,
-        'mutation_rate': 10,
-        'use_holes': True,
-        'explore_concave': True
-    })
-
-    # Define callbacks for progress and display
-    def progress_callback(progress):
-        """Called when progress is made"""
-        print(f"Progress: {progress * 100:.1f}%")
-
-    def display_callback(placement=None, efficiency=None, placed=None, total=None):
-        """Called when a new placement has been made"""
-        if placement:
-            print(f"New placement found - Efficiency: {efficiency * 100:.1f}%")
-            print(f"Placed {placed} out of {total} parts")
-
-            # In a real implementation, you might visualize or save the placement
-            # For example, save each SVG to a file
-            for i, svg_element in enumerate(placement):
-                with open(f'placement_{i}.svg', 'w') as file:
-                    # Convert SVG element to string and save
-                    file.write(str(svg_element))
-
-    # Start nesting process
-    nest.start(progress_callback, display_callback)
-
-    # Wait for completion - in a real application you might have a UI or other mechanism
-    # while nest.working:
-    #     time.sleep(0.5)
-
-    print("Nesting completed!")
+        'populationSize': 10,
+        'mutationRate': 10,
+        'useHoles': True,
+        'exploreConcave': False
+    }
+    print(f"Configuring with parameters: {config}")
+    nester.set_config(config)
+    
+    # 解析SVG
+    print("Parsing SVG content...")
+    try:
+        svg = nester.parse_svg(svg_content)
+        if not svg:
+            print("Error: Failed to parse SVG - svg is None")
+            return
+        print("SVG parsed successfully")
+            
+        # 找到第一个矩形作为容器
+        print("Looking for container rectangle...")
+        bin_element = None
+        rect_elements = svg.getElementsByTagName('rect')
+        print(f"Found {len(rect_elements)} rectangle elements")
+        
+        if rect_elements:
+            bin_element = rect_elements[0]
+            print(f"Container rectangle found: {bin_element.toxml()}")
+        
+        if not bin_element:
+            print("Error: No container rectangle found in SVG")
+            return
+            
+        # 设置容器
+        print("Setting container...")
+        nester.set_bin(bin_element)
+        
+        # 开始布局计算
+        print("Starting placement calculation...")
+        def progress_callback(progress):
+            print(f"Progress: {progress * 100:.2f}%")
+            
+        def display_callback(result=None, efficiency=None, placed=None, total=None):
+            if result and efficiency is not None:
+                print(f"Placement efficiency: {efficiency * 100:.2f}%")
+                if placed is not None and total is not None:
+                    print(f"Placed parts: {placed}/{total}")
+                    
+        result = nester.start(progress_callback, display_callback)
+        if result:
+            print("Placement calculation started successfully")
+        else:
+            print("Error: Failed to start placement calculation")
+            return
+            
+        # 等待计算完成或超时
+        import time
+        timeout = 60  # 60秒超时
+        start_time = time.time()
+        while nester.working and (time.time() - start_time) < timeout:
+            time.sleep(0.1)
+            
+        if nester.working:
+            print("Warning: Calculation timeout, stopping...")
+            nester.stop()
+            
+        # 生成结果
+        print("Creating output directory: output")
+        os.makedirs("output", exist_ok=True)
+        
+        print("Generating placement results...")
+        try:
+            if nester.best and 'placements' in nester.best:
+                # 获取布局结果
+                placements = nester.best['placements']
+                if isinstance(placements, list) and len(placements) > 0:
+                    # 如果是列表的列表，取第一个布局
+                    if isinstance(placements[0], list):
+                        placements = placements[0]
+                    
+                    # 将布局应用到SVG
+                    output_svg = nester.apply_placement(placements)
+                    output_file = os.path.join("output", "placement.svg")
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(output_svg)
+                    print(f"Generated placement results in {output_file}")
+                else:
+                    print("No valid placements found in best result")
+            else:
+                print("No valid placement results found")
+        except Exception as e:
+            print(f"Error generating placement results: {e}")
+            import traceback
+            traceback.print_exc()
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("Program completed")
 
 if __name__ == '__main__':
     main()
