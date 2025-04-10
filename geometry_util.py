@@ -91,11 +91,11 @@ class GeometryUtil:
         """计算多边形面积（正值表示逆时针，负值表示顺时针）"""
         area = 0
         j = len(polygon) - 1
-        
+
         for i in range(len(polygon)):
             area += (polygon[j]['x'] + polygon[i]['x']) * (polygon[j]['y'] - polygon[i]['y'])
             j = i
-            
+
         return area / 2
 
     @staticmethod
@@ -155,39 +155,7 @@ class GeometryUtil:
         # 深拷贝输入多边形以避免修改原始数据
         polygon_a = list(polygon_a)
         polygon_b = list(polygon_b)
-        
-        # 确保输入多边形闭合
-        if len(polygon_a) >= 2 and (not GeometryUtil.almost_equal(polygon_a[0]['x'], polygon_a[-1]['x'], 0.1) or 
-                                   not GeometryUtil.almost_equal(polygon_a[0]['y'], polygon_a[-1]['y'], 0.1)):
-            polygon_a.append(dict(polygon_a[0]))
-            print("no_fit_polygon: 自动闭合多边形A")
-            
-        if len(polygon_b) >= 2 and (not GeometryUtil.almost_equal(polygon_b[0]['x'], polygon_b[-1]['x'], 0.1) or 
-                                   not GeometryUtil.almost_equal(polygon_b[0]['y'], polygon_b[-1]['y'], 0.1)):
-            polygon_b.append(dict(polygon_b[0]))
-            print("no_fit_polygon: 自动闭合多边形B")
-        
-        # 清理输入多边形
-        polygon_a = GeometryUtil.clean_polygon(polygon_a)
-        polygon_b = GeometryUtil.clean_polygon(polygon_b)
-        
-        if not polygon_a or not polygon_b:
-            print("no_fit_polygon: 清理后的多边形无效")
-            return None
-        
-        # 计算多边形面积
-        area_a = abs(GeometryUtil.polygon_area(polygon_a))
-        area_b = abs(GeometryUtil.polygon_area(polygon_b))
-        
-        if area_a < 1e-6 or area_b < 1e-6:
-            print("no_fit_polygon: 多边形面积过小")
-            return None
-            
-        # 确保多边形方向一致（逆时针）
-        if GeometryUtil.polygon_area(polygon_a) < 0:
-            polygon_a.reverse()
-        if GeometryUtil.polygon_area(polygon_b) < 0:
-            polygon_b.reverse()
+
         
         if inside:
             # 获取容器的边界
@@ -288,10 +256,10 @@ class GeometryUtil:
                         'y': point[1] / scale
                     })
                 if len(points) >= 3:
-                    # 确保闭合
-                    if not (GeometryUtil.almost_equal(points[0]['x'], points[-1]['x'], 0.1) and 
-                           GeometryUtil.almost_equal(points[0]['y'], points[-1]['y'], 0.1)):
-                        points.append(dict(points[0]))
+                    # # 确保闭合
+                    # if not (GeometryUtil.almost_equal(points[0]['x'], points[-1]['x'], 0.1) and
+                    #        GeometryUtil.almost_equal(points[0]['y'], points[-1]['y'], 0.1)):
+                    #     points.append(dict(points[0]))
                     nfp.extend(points)
             
             if not nfp:
@@ -356,10 +324,18 @@ class GeometryUtil:
         if not polygon:
             return False
             
+        # 增加容差判断，避免边界情况下的误判
+        tolerance = 0.1  # 增加一个小的容差值
+        
         inside = False
         j = len(polygon) - 1
         
         for i in range(len(polygon)):
+            # 检查点是否在多边形的边界上
+            if (GeometryUtil.almost_equal(point['x'], polygon[i]['x'], tolerance) and 
+                GeometryUtil.almost_equal(point['y'], polygon[i]['y'], tolerance)):
+                return True
+                
             if (((polygon[i]['y'] > point['y']) != (polygon[j]['y'] > point['y'])) and
                 (point['x'] < (polygon[j]['x'] - polygon[i]['x']) * 
                  (point['y'] - polygon[i]['y']) / (polygon[j]['y'] - polygon[i]['y']) + 
@@ -414,9 +390,9 @@ class GeometryUtil:
             return []
             
         # 确保多边形闭合
-        if cleaned and (not GeometryUtil.almost_equal(cleaned[0]['x'], cleaned[-1]['x']) or \
-                       not GeometryUtil.almost_equal(cleaned[0]['y'], cleaned[-1]['y'])):
-            cleaned.append(cleaned[0])
+        # if cleaned and (not GeometryUtil.almost_equal(cleaned[0]['x'], cleaned[-1]['x']) or \
+        #                not GeometryUtil.almost_equal(cleaned[0]['y'], cleaned[-1]['y'])):
+        #     cleaned.append(cleaned[0])
             
         # 计算多边形面积
         area = GeometryUtil.polygon_area(cleaned)
