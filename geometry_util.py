@@ -282,29 +282,9 @@ class GeometryUtil:
 
         # 转换结果回原始格式，我们只取第一个路径（如果有多个）
         result_path = []
-        for point in difference_result[0]:
-            result_path.append({'x': point[0] / SCALING_FACTOR, 'y': point[1] / SCALING_FACTOR})
-
-        return result_path
-        # 添加combined_nfp的并集作为subject
-        for path in union_result:
-            pc_intersection.AddPath(path, pyclipper.PT_SUBJECT, True)
-
-        # 添加bin_nfp作为clip
-        pc_intersection.AddPath(bin_path, pyclipper.PT_CLIP, True)
-
-        # 计算交集
-        intersection_result = pc_intersection.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO,
-                                                      pyclipper.PFT_NONZERO)
-
-        # 如果没有交集，返回空列表
-        if not intersection_result:
-            return []
-
-        # 转换结果回原始格式，我们只取第一个路径（如果有多个）
-        result_path = []
-        for point in intersection_result[0]:
-            result_path.append({'x': point[0] / SCALING_FACTOR, 'y': point[1] / SCALING_FACTOR})
+        for result in difference_result:
+            for point in result:
+                result_path.append({'x': point[0] / SCALING_FACTOR, 'y': point[1] / SCALING_FACTOR})
 
         return result_path
 

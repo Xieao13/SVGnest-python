@@ -250,7 +250,7 @@ def rotate_polygon(polygon, degrees):
 
 class PlacementWorker:
     def __init__(self, bin_polygon: List[Dict], paths: List[Dict], ids: List[int],
-                 rotations: List[float], config: Dict, nfp_cache: Dict):
+                 rotations: List[float], config: Dict):
         """初始化放置工作器。
 
         Args:
@@ -259,7 +259,6 @@ class PlacementWorker:
             ids: 路径ID列表
             rotations: 允许的旋转角度列表
             config: 配置参数
-            nfp_cache: NFP缓存字典
         """
         # 验证输入参数
         if not bin_polygon or not isinstance(bin_polygon, list):
@@ -279,12 +278,11 @@ class PlacementWorker:
 
         # 初始化属性
         self.bin_polygon = bin_polygon
-        self.bin_id = 0  # 为容器多边形分配固定ID 0
+        self.bin_id = -1  # 为容器多边形分配固定ID -1
         self.paths = paths
         self.ids = ids
         self.rotations = rotations
         self.config = config
-        self.nfp_cache = nfp_cache or {}
 
         # 计算容器边界
         self.bin_bounds = GeometryUtil.get_polygon_bounds(bin_polygon)
@@ -339,7 +337,7 @@ class PlacementWorker:
         """放置路径，使用NFP进行优化放置"""
         print("place_paths: 开始放置路径...")
 
-        # paths = paths[0:4]
+        # paths = paths[0:8]
 
         placed_paths = []
         unplaced = []
@@ -368,8 +366,6 @@ class PlacementWorker:
 
                 # 获取与容器的内部NFP
                 bin_nfp = GeometryUtil.no_fit_polygon(bin_polygon, path, inside=True)
-                # key = f"bin,{path_id}"
-                # bin_nfp = self.nfp_cache.get(key)
 
                 if not bin_nfp:
                     print(f"place_paths: 路径 {i} 无法放入容器")
@@ -385,7 +381,6 @@ class PlacementWorker:
                         'x': dx,
                         'y': dy,
                         'id': path_id,
-                        'rotation': getattr(path, 'rotation', 0)
                     }
 
                     # 验证位置是否有效
@@ -426,6 +421,9 @@ class PlacementWorker:
 
                 # 求combined_nfp图形轮廓的并集的外部轮廓与bin_nfp内部的交集
                 final_nfp = GeometryUtil.polygon_intersection(combined_nfp, bin_nfp)
+
+                # 排序，将final_nfp优先按y坐标从小到大排序,当y坐标相同时按x坐标从小到大排序
+                final_nfp.sort(key=lambda point: (point['y'], point['x']))
 
                 # 5. 在可行区域中寻找最佳位置
                 min_width = None
@@ -469,9 +467,10 @@ class PlacementWorker:
                         continue
 
                     # 计算面积（权重宽度更大，以帮助压缩重力方向）
-                    area = bounds['height']+bounds['width']
+                    area = bounds['height']
 
-                    if min_area is None or area < min_area:
+                    if min_area is None or area < min_area or area == min_area and bounds['width'] < min_width:
+                        min_width = bounds['width']
                         min_area = area
                         best_position = shift
 
@@ -502,7 +501,6 @@ class PlacementWorker:
 
                 placed_paths.append({
                     'path': placed_path,
-                    'rotation': placement.get('rotation', 0)
                 })
 
         print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")

@@ -31,7 +31,7 @@ class SvgNest:
             'clipperScale': 10000000,
             'curveTolerance': 0,
             'spacing': 0,
-            'rotations': 4,
+            'rotations': 2,
             'populationSize': 10,
             'mutationRate': 10,
             'useHoles': False,
@@ -363,7 +363,7 @@ class SvgNest:
         bin_element.setAttribute('y', '0')
         bin_element.setAttribute('width', str(self.bin_bounds['width']))
         bin_element.setAttribute('height', str(self.bin_bounds['height']))
-        bin_element.setAttribute('fill', 'none')
+        bin_element.setAttribute('fill', 'white')
         bin_element.setAttribute('stroke', 'red')
         svg.appendChild(bin_element)
 
@@ -402,16 +402,6 @@ class SvgNest:
                 print(f"apply_placement: 跳过空路径 {i}")
                 continue
 
-            # 获取变换参数
-            if i < len(placement_info):
-                info = placement_info[i]
-                x = info.get('x', 0)
-                y = info.get('y', 0)
-                rotation = info.get('rotation', 0)
-            else:
-                print(f"apply_placement: 路径 {i} 缺少放置信息")
-                continue
-
             # 验证路径数据
             if not isinstance(path, list):
                 print(f"apply_placement: 路径 {i} 格式无效")
@@ -426,7 +416,7 @@ class SvgNest:
                         continue
                     # 计算相对于容器的坐标
                     px = point['x']
-                    py = point['y']
+                    py = self.bin_bounds['height'] - point['y']
                     cmd = 'M' if j == 0 else 'L'
                     d.append(f"{cmd} {px},{py}")
 
@@ -439,18 +429,11 @@ class SvgNest:
 
                 # 创建组元素
                 g = doc.createElement('g')
-                if rotation != 0:
-                    # 计算旋转中心点
-                    bounds = GeometryUtil.get_polygon_bounds(path)
-                    center_x = bounds['x'] + bounds['width'] / 2
-                    center_y = bounds['y'] + bounds['height'] / 2
-                    # 应用旋转
-                    g.setAttribute('transform', f"rotate({rotation}, {center_x + x}, {center_y + y})")
 
                 # 创建路径元素
                 path_element = doc.createElement('path')
                 path_element.setAttribute('d', ' '.join(d))
-                path_element.setAttribute('fill', 'none')
+                path_element.setAttribute('fill', 'yellow')
                 path_element.setAttribute('stroke', 'black')
                 g.appendChild(path_element)
 
@@ -475,7 +458,7 @@ class SvgNest:
                 flat.extend(self._flatten_tree(node.children, not hole))
         return flat
 
-    def start(self, progress_callback: Callable, display_callback: Callable) -> bool:
+    def start(self) -> bool:
         """开始布局计算"""
         if not self.svg or not self.bin:
             return False
@@ -548,14 +531,10 @@ class SvgNest:
         # 启动工作进程
         def worker():
             if not self.working:
-                self.launch_workers(self.tree, self.bin_polygon, self.config,
-                                    progress_callback, display_callback)
+                self.launch_workers(self.tree, self.bin_polygon, self.config)
                 self.working = True
-            progress_callback(self.progress)
 
-        self.worker_timer = worker
         worker()  # 立即开始第一次计算
-
         return True
 
     def _offset_tree(self, tree: List, offset: float):
@@ -568,7 +547,7 @@ class SvgNest:
             if hasattr(path, 'children') and path.children:
                 self._offset_tree(path.children, -offset)
 
-    def launch_workers(self, tree, bin_polygon, config, progress_callback, display_callback):
+    def launch_workers(self, tree, bin_polygon, config):
         """启动工作进程"""
         print("launch_workers: 开始...")
 
@@ -606,16 +585,16 @@ class SvgNest:
 
         print(f"launch_workers: 有效路径数量={len(valid_paths)}，总面积={total_area}")
 
-        # 计算NFP缓存
-        try:
-            nfp_cache = self.calculate_nfp_cache(bin_polygon, valid_paths)
-            if not nfp_cache:
-                print("launch_workers: NFP缓存计算失败")
-                return False
-            print(f"launch_workers: 成功计算 {len(nfp_cache)} 个NFP")
-        except Exception as e:
-            print(f"launch_workers: 计算NFP缓存时出错: {e}")
-            return False
+        # # 计算NFP缓存(并不需要，直接计算就行了)
+        # try:
+        #     nfp_cache = self.calculate_nfp_cache(bin_polygon, valid_paths)
+        #     if not nfp_cache:
+        #         print("launch_workers: NFP缓存计算失败")
+        #         return False
+        #     print(f"launch_workers: 成功计算 {len(nfp_cache)} 个NFP")
+        # except Exception as e:
+        #     print(f"launch_workers: 计算NFP缓存时出错: {e}")
+        #     return False
 
         # 创建放置工作器
         try:
@@ -625,7 +604,6 @@ class SvgNest:
                 ids=[i for i in range(len(valid_paths))],
                 rotations=[0] * len(valid_paths),
                 config=config,
-                nfp_cache=nfp_cache
             )
         except Exception as e:
             print(f"launch_workers: 创建放置工作器时出错: {e}")
@@ -633,17 +611,8 @@ class SvgNest:
 
         # 执行放置计算
         try:
-            # 设置超时时间（秒）
-            timeout = 3  # 5分钟
-            start_time = time.time()
-
             # 执行放置计算
             placed, unplaced = worker.place_paths(bin_polygon, valid_paths)
-
-            # 检查是否超时
-            if time.time() - start_time > timeout:
-                print("launch_workers: 放置计算超时")
-                return False
 
             if not placed:
                 print("launch_workers: 放置计算失败")
@@ -686,14 +655,6 @@ class SvgNest:
 
             # 保存结果
             self.best = result
-
-            # 更新进度和显示
-            if progress_callback:
-                progress_callback(1.0)
-            if display_callback:
-                display_callback(result=result, efficiency=efficiency,
-                                 placed=len(placed), total=len(valid_paths))
-
             return True
 
         except Exception as e:
@@ -767,25 +728,6 @@ class SvgNest:
         print(f"calculate_nfp_cache: 完成，共计算 {len(nfp_cache)} 个NFP")
         return nfp_cache
 
-    def read_svg_file(self,file_path: str) -> str:
-        """读取SVG文件内容"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            print(f"Error reading SVG file: {e}")
-            return ""
-
-    def progress_callback(progress: float):
-        """进度回调函数"""
-        print(f"Progress: {progress * 100:.2f}%")
-
-    def display_callback(result=None, efficiency=None, placed=None, total=None):
-        """显示回调函数"""
-        if result:
-            print(f"Placement efficiency: {efficiency * 100:.2f}%")
-            print(f"Placed parts: {placed}/{total}")
-
 
 def main(svg_file: str):
     """主函数"""
@@ -810,7 +752,7 @@ def main(svg_file: str):
     # 配置参数
     config = {
         'spacing': 0,
-        'rotations': 4,
+        'rotations': 2,
         'populationSize': 10,
         'mutationRate': 10,
         'useHoles': True,
@@ -819,9 +761,9 @@ def main(svg_file: str):
     print(f"Configuring with parameters: {config}")
     nester.set_config(config)
 
-    # 解析SVG
-    print("==================================Parsing SVG content===================================")
     try:
+        # ====================================解析SVG=====================================
+        print("Parsing SVG content...")
         svg = nester.parse_svg(svg_content)
         if not svg:
             print("Error: Failed to parse SVG - svg is None")
@@ -846,26 +788,17 @@ def main(svg_file: str):
         print("Setting container...")
         nester.set_bin(bin_element)
 
-        # 开始布局计算
+        # =================================开始布局计算===================================
         print("Starting placement calculation...")
 
-        def progress_callback(progress):
-            print(f"Progress: {progress * 100:.2f}%")
-
-        def display_callback(result=None, efficiency=None, placed=None, total=None):
-            if result and efficiency is not None:
-                print(f"Placement efficiency: {efficiency * 100:.2f}%")
-                if placed is not None and total is not None:
-                    print(f"Placed parts: {placed}/{total}")
-
-        result = nester.start(progress_callback, display_callback)
+        result = nester.start()
         if result:
             print("Placement calculation started successfully")
         else:
             print("Error: Failed to start placement calculation")
             return
 
-        # 生成结果
+        # ==================================生成svg结果===================================
         print("Creating output directory: output")
         os.makedirs("output", exist_ok=True)
 
