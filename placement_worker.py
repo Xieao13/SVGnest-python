@@ -220,12 +220,7 @@ def rotate_polygon(polygon, degrees):
 
         # 保持与输入点相同的类型
         if isinstance(point, dict):
-            rotated.append({'x': x1, 'y': y1})
-        else:
-            p = CustomList()
-            p.x = x1
-            p.y = y1
-            rotated.append(p)
+            rotated.append({'x': round(x1), 'y': round(y1)})
 
     # 复制原始多边形的属性
     for attr in dir(polygon):
@@ -333,23 +328,32 @@ class PlacementWorker:
                 ref_point = {'x': point['x'], 'y': point['y']}
         return ref_point
 
-    def place_paths(self, bin_polygon: List[Dict], paths: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    def place_paths(self):
         """放置路径，使用NFP进行优化放置"""
         print("place_paths: 开始放置路径...")
 
-        # paths = paths[0:8]
+        paths = self.paths
 
         placed_paths = []
         unplaced = []
         fitness = 0
+        max_area = 0
 
         # 1. 计算容器边界
-        bin_bounds = GeometryUtil.get_polygon_bounds(bin_polygon)
+        bin_bounds = GeometryUtil.get_polygon_bounds(self.bin_polygon)
         print(f"place_paths: 容器边界: {bin_bounds}")
 
         # 计算容器的左下角点（相对于原点）
         bin_min_x = bin_bounds['x']
         bin_min_y = bin_bounds['y']
+
+        # 2. 旋转零件
+        rotated = []
+        for i, path in enumerate(paths):
+            r = rotate_polygon(path, self.rotations[i])
+            rotated.append(r)
+        paths = rotated
+
 
         while paths:
             placed = []
@@ -365,7 +369,7 @@ class PlacementWorker:
                 path_id = getattr(path, 'id', i)
 
                 # 获取与容器的内部NFP
-                bin_nfp = GeometryUtil.no_fit_polygon(bin_polygon, path, inside=True)
+                bin_nfp = GeometryUtil.no_fit_polygon(self.bin_polygon, path, inside=True)
 
                 if not bin_nfp:
                     print(f"place_paths: 路径 {i} 无法放入容器")
@@ -470,6 +474,7 @@ class PlacementWorker:
                     area = bounds['height']
 
                     if min_area is None or area < min_area or area == min_area and bounds['width'] < min_width:
+                        max_area = bounds['height']*bounds['width']
                         min_width = bounds['width']
                         min_area = area
                         best_position = shift
@@ -504,7 +509,7 @@ class PlacementWorker:
                 })
 
         print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
-        return placed_paths, unplaced
+        return placed_paths, unplaced, max_area
 
     def _move_path(self, path: List[Dict], position: Dict) -> List[Dict]:
         """移动路径到指定位置

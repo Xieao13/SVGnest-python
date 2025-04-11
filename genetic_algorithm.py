@@ -72,8 +72,8 @@ class GeneticAlgorithm:
             random.shuffle(individual.placement)
             # 随机旋转角度
             individual.rotation = [
-                random.choice([0, 90, 180, 270])
-                for _ in range(len(self.parts))
+                self.random_angle(part)
+                for part in individual.placement
             ]
             self.population.append(individual)
 
@@ -219,11 +219,12 @@ class GeneticAlgorithm:
         child.rotation = parent1.rotation[:crossover_point]
 
         # 从父代2复制剩余部分（避免重复）
-        remaining_parts = [
-            part for part in parent2.placement
-            if part not in child.placement
-        ]
-        remaining_rotations = parent2.rotation[len(child.placement):]
+        remaining_parts = []
+        remaining_rotations = []
+        for i, part in enumerate(parent2.placement):
+            if part not in child.placement:
+                remaining_parts.append(part)
+                remaining_rotations.append(parent2.rotation[i])
 
         child.placement.extend(remaining_parts)
         child.rotation.extend(remaining_rotations)
@@ -244,10 +245,11 @@ class GeneticAlgorithm:
         # 随机选择两个位置交换
         i, j = random.sample(range(len(mutant.placement)), 2)
         mutant.placement[i], mutant.placement[j] = mutant.placement[j], mutant.placement[i]
+        mutant.rotation[i], mutant.rotation[j] = mutant.rotation[j], mutant.rotation[i]
 
         # 随机改变一个旋转角度
         k = random.randint(0, len(mutant.rotation) - 1)
-        mutant.rotation[k] = random.choice([0, 90, 180, 270])
+        mutant.rotation[k] = self.random_angle(mutant.placement[k])
 
         return mutant
 

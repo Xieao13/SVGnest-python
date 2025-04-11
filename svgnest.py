@@ -286,8 +286,8 @@ class SvgNest:
                 result = []
                 for p in clean:
                     result.append({
-                        'x': p[0] / scale,
-                        'y': p[1] / scale
+                        'x': round(p[0] / scale),
+                        'y': round(p[1] / scale)
                     })
 
                 print(f"clean_polygon: 转换回原始坐标成功，点数: {len(result)}")
@@ -531,8 +531,25 @@ class SvgNest:
         # 启动工作进程
         def worker():
             if not self.working:
-                self.launch_workers(self.tree, self.bin_polygon, self.config)
-                self.working = True
+                # 添加迭代计数器
+                iteration = 0
+                max_iterations = 50  # 最大迭代次数
+                best_efficiency = 0
+                
+                while iteration < max_iterations and not self.working:
+                    print(f"\n开始第 {iteration + 1} 次迭代...")
+                    self.launch_workers(self.tree, self.bin_polygon, self.config)
+                    
+                    # 更新最佳效率
+                    if self.best and self.best.get('efficiency', 0) > best_efficiency:
+                        best_efficiency = self.best['efficiency']
+                        print(f"找到新的最佳解，效率={best_efficiency:.2%}")
+                    
+                    iteration += 1
+                
+                print(f"\n迭代结束，共进行 {iteration} 次迭代")
+                print(f"最终效率={best_efficiency:.2%}")
+                self.working = False
 
         worker()  # 立即开始第一次计算
         return True
@@ -585,24 +602,37 @@ class SvgNest:
 
         print(f"launch_workers: 有效路径数量={len(valid_paths)}，总面积={total_area}")
 
-        # # 计算NFP缓存(并不需要，直接计算就行了)
-        # try:
-        #     nfp_cache = self.calculate_nfp_cache(bin_polygon, valid_paths)
-        #     if not nfp_cache:
-        #         print("launch_workers: NFP缓存计算失败")
-        #         return False
-        #     print(f"launch_workers: 成功计算 {len(nfp_cache)} 个NFP")
-        # except Exception as e:
-        #     print(f"launch_workers: 计算NFP缓存时出错: {e}")
-        #     return False
+        # 初始化遗传算法
+        if self.GA is None:
+            print("launch_workers: 初始化遗传算法...")
+            # 按面积从大到小排序作为初始个体
+            valid_paths.sort(key=lambda x: abs(GeometryUtil.polygon_area(x)), reverse=True)
+            self.GA = GeneticAlgorithm(valid_paths, bin_polygon, config)
+
+        # 获取当前需要评估的个体
+        individual = None
+        for ind in self.GA.population:
+            if not hasattr(ind, 'fitness') or ind.fitness is None:
+                individual = ind
+                break
+
+        if individual is None:
+            # 所有个体都已评估，开始下一代
+            print("launch_workers: 开始新一代...")
+            self.GA.generation()
+            individual = self.GA.population[1]  # 使用第二个个体开始新的一代
+
+        # 获取当前个体的放置顺序和旋转角度
+        placelist = individual.placement
+        rotations = individual.rotation
 
         # 创建放置工作器
         try:
             worker = PlacementWorker(
                 bin_polygon=bin_polygon,
-                paths=valid_paths,
-                ids=[i for i in range(len(valid_paths))],
-                rotations=[0] * len(valid_paths),
+                paths=placelist,
+                ids=[i for i in range(len(placelist))],
+                rotations=rotations,
                 config=config,
             )
         except Exception as e:
@@ -612,49 +642,55 @@ class SvgNest:
         # 执行放置计算
         try:
             # 执行放置计算
-            placed, unplaced = worker.place_paths(bin_polygon, valid_paths)
+            placed, unplaced, max_area= worker.place_paths()
 
             if not placed:
                 print("launch_workers: 放置计算失败")
                 return False
 
-            # 计算效率
+            # 计算性能
             placed_area = sum(abs(GeometryUtil.polygon_area(path['path'])) for path in placed)
-            efficiency = placed_area / bin_area if bin_area > 0 else 0
+            efficiency = placed_area / max_area if bin_area > 0 else 0
 
-            print(f"launch_workers: 放置完成，效率={efficiency:.2%}")
+            print(f"launch_workers: 放置完成，利用率={efficiency:.2%}")
             print(f"launch_workers: 已放置 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
 
-            # 构建结果
-            result = {
-                'placements': [],
-                'paths': [],
-                'unplaced': unplaced,
-                'efficiency': efficiency
-            }
+            # 更新个体的适应度
+            individual.fitness = 1-efficiency  # 适应度越小越好
 
-            # 添加每个已放置的路径
-            for i, placed_path in enumerate(placed):
-                # 获取原始路径
-                original_path = valid_paths[i]
+            # 更新最佳结果
+            if not self.best or efficiency > self.best.get('efficiency', 0):
+                # 构建结果
+                result = {
+                    'placements': [],
+                    'paths': [],
+                    'unplaced': unplaced,
+                    'efficiency': efficiency
+                }
 
-                # 计算变换参数
-                dx = placed_path['path'][0]['x'] - original_path[0]['x']
-                dy = placed_path['path'][0]['y'] - original_path[0]['y']
+                # 添加每个已放置的路径
+                for i, placed_path in enumerate(placed):
+                    # 获取原始路径
+                    original_path = placelist[i]
 
-                # 添加放置信息
-                result['placements'].append({
-                    'x': dx,
-                    'y': dy,
-                    'rotation': placed_path.get('rotation', 0),
-                    'id': i
-                })
+                    # 计算变换参数
+                    dx = placed_path['path'][0]['x'] - original_path[0]['x']
+                    dy = placed_path['path'][0]['y'] - original_path[0]['y']
 
-                # 添加路径数据
-                result['paths'].append(placed_path['path'])
+                    # 添加放置信息
+                    result['placements'].append({
+                        'x': dx,
+                        'y': dy,
+                        'rotation': placed_path.get('rotation', 0),
+                        'id': i
+                    })
 
-            # 保存结果
-            self.best = result
+                    # 添加路径数据
+                    result['paths'].append(placed_path['path'])
+
+                # 保存结果
+                self.best = result
+
             return True
 
         except Exception as e:
@@ -752,9 +788,9 @@ def main(svg_file: str):
     # 配置参数
     config = {
         'spacing': 0,
-        'rotations': 2,
-        'populationSize': 10,
-        'mutationRate': 10,
+        'rotations': 4,
+        'populationSize': 5,
+        'mutationRate': 50,
         'useHoles': True,
         'exploreConcave': False
     }
