@@ -172,8 +172,26 @@ class GeometryUtil:
         bounds_a = get_bounds(polygon_a)
         bounds_b = get_bounds(polygon_b)
 
+        def get_reference_point(polygon: List[Dict]) -> Dict:
+            """获取多边形的参考点（最左下角点）
+
+            Args:
+                polygon: 多边形点列表
+
+            Returns:
+                参考点坐标
+            """
+            if not polygon:
+                return {'x': 0, 'y': 0}
+
+            ref_point = {'x': polygon[0]['x'], 'y': polygon[0]['y']}
+            for point in polygon:
+                if point['x'] < ref_point['x'] or (point['x'] == ref_point['x'] and point['y'] < ref_point['y']):
+                    ref_point = {'x': point['x'], 'y': point['y']}
+            return ref_point
+
         # 获取B的参考点（最左下角点）
-        ref_point = {'x': bounds_b['minx'], 'y': bounds_b['miny']}
+        ref_point = get_reference_point(polygon_b)
 
         if inside:
             # ===== 内部NFP计算 =====

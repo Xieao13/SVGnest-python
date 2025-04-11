@@ -257,6 +257,23 @@ class PlacementWorker:
             config: 配置参数
             nfp_cache: NFP缓存字典
         """
+        # 验证输入参数
+        if not bin_polygon or not isinstance(bin_polygon, list):
+            raise ValueError("无效的容器多边形")
+            
+        if not paths or not isinstance(paths, list):
+            raise ValueError("无效的路径列表")
+            
+        if not ids or not isinstance(ids, list):
+            raise ValueError("无效的ID列表")
+            
+        if not rotations or not isinstance(rotations, list):
+            raise ValueError("无效的旋转角度列表")
+            
+        if not config or not isinstance(config, dict):
+            raise ValueError("无效的配置参数")
+            
+        # 初始化属性
         self.bin_polygon = bin_polygon
         self.bin_id = 0  # 为容器多边形分配固定ID 0
         self.paths = paths
@@ -264,171 +281,275 @@ class PlacementWorker:
         self.rotations = rotations
         self.config = config
         self.nfp_cache = nfp_cache or {}
+        
+        # 计算容器边界
+        self.bin_bounds = GeometryUtil.get_polygon_bounds(bin_polygon)
+        if not self.bin_bounds:
+            raise ValueError("无法计算容器边界")
+            
+        # 计算容器面积
+        self.bin_area = abs(GeometryUtil.polygon_area(bin_polygon))
+        if self.bin_area <= 0:
+            raise ValueError("容器面积无效")
+            
+        # 验证路径
+        self.valid_paths = []
+        self.total_area = 0
+        for i, path in enumerate(paths):
+            if not self._is_valid_polygon(path):
+                print(f"路径 {i} 无效，跳过")
+                continue
+                
+            area = abs(GeometryUtil.polygon_area(path))
+            if area < 1e-6:
+                print(f"路径 {i} 面积过小，跳过")
+                continue
+                
+            self.valid_paths.append(path)
+            self.total_area += area
+            
+        if not self.valid_paths:
+            raise ValueError("没有有效的路径")
+            
+        print(f"初始化完成: {len(self.valid_paths)} 个有效路径，总面积={self.total_area}")
 
-    def place_paths(self, bin_polygon: List[Dict], paths: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-        """放置路径
+    def _get_reference_point(self, polygon: List[Dict]) -> Dict:
+        """获取多边形的参考点（最左下角点）
         
         Args:
-            bin_polygon: 容器多边形
-            paths: 路径列表
+            polygon: 多边形点列表
             
         Returns:
-            Tuple[List[Dict], List[Dict]]: (已放置路径列表, 未放置路径列表)
+            参考点坐标
         """
-        print("place_paths: 开始放置...")
+        if not polygon:
+            return {'x': 0, 'y': 0}
+            
+        ref_point = {'x': polygon[0]['x'], 'y': polygon[0]['y']}
+        for point in polygon:
+            if point['x'] < ref_point['x'] or (point['x'] == ref_point['x'] and point['y'] < ref_point['y']):
+                ref_point = {'x': point['x'], 'y': point['y']}
+        return ref_point
+
+    def place_paths(self, bin_polygon: List[Dict], paths: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+        """放置路径，使用NFP进行优化放置"""
+        print("place_paths: 开始放置路径...")
+
+        # paths=paths[0:1]
         
-        # 确保容器多边形闭合
-        if len(bin_polygon) >= 2 and (not GeometryUtil.almost_equal(bin_polygon[0]['x'], bin_polygon[-1]['x'], 0.1) or 
-                                     not GeometryUtil.almost_equal(bin_polygon[0]['y'], bin_polygon[-1]['y'], 0.1)):
-            bin_polygon = list(bin_polygon)
-            bin_polygon.append(dict(bin_polygon[0]))
-            print("place_paths: 自动闭合容器多边形")
-        
-        # 确保所有路径闭合
-        closed_paths = []
-        for path in paths:
-            if not path:
-                continue
-            
-            # 如果是字典格式，获取polygon属性
-            if isinstance(path, dict) and hasattr(path, 'polygon'):
-                path = path.polygon
-            
-            # 确保路径闭合
-            if len(path) >= 2 and (not GeometryUtil.almost_equal(path[0]['x'], path[-1]['x'], 0.1) or 
-                                  not GeometryUtil.almost_equal(path[0]['y'], path[-1]['y'], 0.1)):
-                path = list(path)
-                path.append(dict(path[0]))
-                print("place_paths: 自动闭合路径")
-            closed_paths.append(path)
-        
-        # 验证输入
-        if not self._is_valid_polygon(bin_polygon):
-            print("place_paths: 容器多边形无效")
-            return [], paths
-            
-        # 转换为Clipper格式
-        try:
-            scale = 1000000
-            bin_clipper = []
-            for point in bin_polygon:
-                if isinstance(point, (list, tuple)):
-                    x = float(point[0])
-                    y = float(point[1])
-                else:
-                    x = float(point['x'])
-                    y = float(point['y'])
-                bin_clipper.append((int(x * scale), int(y * scale)))
-            
-            pc = pyclipper.Pyclipper()
-            pc.AddPath(bin_clipper, pyclipper.PT_SUBJECT, True)
-            
-            # 计算容器面积
-            bin_area = abs(pyclipper.Area(bin_clipper))
-            if bin_area < 1:
-                print("place_paths: 容器面积过小")
-                return [], paths
-                
-        except Exception as e:
-            print(f"place_paths: Clipper初始化失败: {e}")
-            return [], paths
-            
-        # 初始化结果
-        placed = []
+        placed_paths = []
         unplaced = []
+        fitness = 0
         
-        # 尝试放置每个路径
-        for i, path in enumerate(closed_paths):
-            print(f"place_paths: 尝试放置路径 {i}")
+        # 1. 计算容器边界
+        bin_bounds = GeometryUtil.get_polygon_bounds(bin_polygon)
+        print(f"place_paths: 容器边界: {bin_bounds}")
+        
+        # 计算容器的左下角点（相对于原点）
+        bin_min_x = bin_bounds['x']
+        bin_min_y = bin_bounds['y']
+        
+        while paths:
+            placed = []
+            placements = []
+            fitness += 1  # 每开启新的放置尝试增加1
             
-            if not self._is_valid_polygon(path):
-                print(f"place_paths: 路径 {i} 无效，跳过")
-                unplaced.append(path)
-                continue
-            
-            # 获取与容器的NFP
-            bin_nfp_key = f"bin,{i}"
-            if bin_nfp_key not in self.nfp_cache:
-                print(f"place_paths: 未找到路径 {i} 与容器的NFP")
-                unplaced.append(path)
-                continue
-            
-            # 获取与已放置路径的NFP
-            placement_found = False
-            min_overlap = float('inf')
-            best_position = None
-            
-            # 尝试不同位置
-            for position in self.nfp_cache[bin_nfp_key]:
-                valid_position = True
+            # 2. 尝试放置每个路径
+            for i, path in enumerate(paths):
+                # 获取路径的参考点
+                ref_point = self._get_reference_point(path)
                 
-                # 移动路径到当前位置
-                moved_path = []
-                for p in path:
-                    if isinstance(p, (list, tuple)):
-                        x = float(p[0]) + position['x']
-                        y = float(p[1]) + position['y']
-                    else:
-                        x = float(p['x']) + position['x']
-                        y = float(p['y']) + position['y']
-                    moved_path.append({'x': x, 'y': y})
+                # 获取路径ID
+                path_id = getattr(path, 'id', i)
+                
+                # 获取与容器的内部NFP
+                key = f"bin,{path_id}"
+                bin_nfp = self.nfp_cache.get(key)
+                
+                if not bin_nfp:
+                    print(f"place_paths: 路径 {i} 无法放入容器")
+                    continue
                     
-                # 检查与已放置路径的重叠
+                # 检查与已放置路径的NFP是否存在
+                error = False
                 for j, placed_path in enumerate(placed):
-                    nfp_key = f"{i},{j}"
-                    reverse_nfp_key = f"{j},{i}"
+                    placed_id = getattr(placed_path, 'id', j)
+                    key = f"{placed_id},{path_id}"
+                    reverse_key = f"{path_id},{placed_id}"
                     
-                    if nfp_key not in self.nfp_cache and reverse_nfp_key not in self.nfp_cache:
-                        print(f"place_paths: 未找到路径 {i} 和 {j} 之间的NFP")
+                    if key not in self.nfp_cache and reverse_key not in self.nfp_cache:
+                        error = True
+                        break
+                
+                if error:
+                    continue
+                    
+                # 3. 寻找放置位置
+                position = None
+                
+                # 如果是第一个放置的路径，放在容器左下角
+                if not placed:
+                    # 计算偏移量，确保路径被放置在容器内
+                    dx = bin_min_x - ref_point['x']
+                    dy = bin_min_y - ref_point['y']
+                    
+                    position = {
+                        'x': dx,
+                        'y': dy,
+                        'id': path_id,
+                        'rotation': getattr(path, 'rotation', 0)
+                    }
+                    
+                    # 验证位置是否有效
+                    path_bounds = GeometryUtil.get_polygon_bounds(path)
+                    if (dx + path_bounds['x'] < bin_min_x or
+                        dy + path_bounds['y'] < bin_min_y or
+                        dx + path_bounds['x'] + path_bounds['width'] > bin_min_x + bin_bounds['width'] or
+                        dy + path_bounds['y'] + path_bounds['height'] > bin_min_y + bin_bounds['height']):
+                        print(f"place_paths: 路径 {i} 无法放置在容器内")
                         continue
-                        
-                    nfp = self.nfp_cache.get(nfp_key) or self.nfp_cache.get(reverse_nfp_key)
+                    
+                    placements.append(position)
+                    placed.append(path)
+                    continue
+                
+                # 4. 计算与已放置路径的NFP
+                combined_nfp = []
+                
+                for j, placed_path in enumerate(placed):
+                    placed_id = getattr(placed_path, 'id', j)
+                    key = f"{placed_id},{path_id}"
+                    reverse_key = f"{path_id},{placed_id}"
+                    
+                    nfp = None
+                    if key in self.nfp_cache:
+                        nfp = self.nfp_cache[key]
+                    elif reverse_key in self.nfp_cache:
+                        # 如果使用反向NFP，需要调整参考点
+                        nfp = self.nfp_cache[reverse_key]
+                        placed_ref = self._get_reference_point(placed_path)
+                        path_ref = self._get_reference_point(path)
+                        # 调整NFP点的位置
+                        nfp = [[{'x': p['x'] + (placed_ref['x'] - path_ref['x']),
+                               'y': p['y'] + (placed_ref['y'] - path_ref['y'])} for p in n] for n in nfp]
+                    
                     if not nfp:
                         continue
-
-                    # 检查是否重叠
-                    if GeometryUtil.polygons_intersect(moved_path, placed_path['path']):
-                        valid_position = False
-                        break
                         
-                if valid_position:
-                    # 计算与容器边界的距离
-                    bounds = GeometryUtil.get_polygon_bounds(moved_path)
-                    bin_bounds = GeometryUtil.get_polygon_bounds(bin_polygon)
-                    
-                    distance = (
-                        abs(bounds['x'] - bin_bounds['x']) +
-                        abs(bounds['y'] - bin_bounds['y'])
-                    )
-                    
-                    if distance < min_overlap:
-                        min_overlap = distance
-                        best_position = position
-                        placement_found = True
-                        
-            if placement_found and best_position:
-                # 移动路径到最佳位置
-                placed_path = []
-                for p in path:
-                    if isinstance(p, (list, tuple)):
-                        x = float(p[0]) + best_position['x']
-                        y = float(p[1]) + best_position['y']
-                    else:
-                        x = float(p['x']) + best_position['x']
-                        y = float(p['y']) + best_position['y']
-                    placed_path.append({'x': x, 'y': y})
-                    
-                placed.append({
-                    'path': placed_path,
-                    'rotation': 0  # 暂时不考虑旋转
-                })
-                print(f"place_paths: 成功放置路径 {i}")
-            else:
-                unplaced.append(path)
-                print(f"place_paths: 无法放置路径 {i}")
+                    # 移动NFP到已放置零件的位置
+                    moved_nfp = []
+                    for point in nfp:
+                        moved_nfp.append({
+                            'x': point['x'] + placements[j]['x'],
+                            'y': point['y'] + placements[j]['y']
+                        })
+                    combined_nfp.append(moved_nfp)
                 
-        print(f"place_paths: 完成，放置了 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
-        return placed, unplaced
+                if not combined_nfp:
+                    continue
+                    
+                # 5. 在可行区域中寻找最佳位置
+                min_width = None
+                min_area = None
+                best_position = None
+                
+                for nfp in combined_nfp:
+                    if abs(GeometryUtil.polygon_area(nfp)) < 1:
+                        continue
+                        
+                    for k, point in enumerate(nfp):
+                        # 计算放置后的所有点
+                        all_points = []
+                        
+                        # 添加已放置零件的点
+                        for m, placed_item in enumerate(placed):
+                            for n, p in enumerate(placed_item):
+                                all_points.append({
+                                    'x': p['x'] + placements[m]['x'],
+                                    'y': p['y'] + placements[m]['y']
+                                })
+                        
+                        # 计算当前位置
+                        shift = {
+                            'x': point['x'] - ref_point['x'],
+                            'y': point['y'] - ref_point['y'],
+                            'id': path_id,
+                            'rotation': getattr(path, 'rotation', 0)
+                        }
+                        
+                        # 添加当前零件的点
+                        for p in path:
+                            all_points.append({
+                                'x': p['x'] + shift['x'],
+                                'y': p['y'] + shift['y']
+                            })
+                        
+                        # 计算边界框
+                        bounds = GeometryUtil.get_polygon_bounds(all_points)
+                        
+                        # 检查是否在容器内
+                        if (bounds['x'] < bin_min_x or bounds['y'] < bin_min_y or
+                            bounds['x'] + bounds['width'] > bin_min_x + bin_bounds['width'] or
+                            bounds['y'] + bounds['height'] > bin_min_y + bin_bounds['height']):
+                            continue
+                        
+                        # 计算面积（权重宽度更大，以帮助压缩重力方向）
+                        area = bounds['width'] * 2 + bounds['height']
+                        
+                        if min_area is None or area < min_area:
+                            min_area = area
+                            best_position = shift
+                
+                if best_position:
+                    placed.append(path)
+                    placements.append(best_position)
+            
+            # 6. 更新未放置的路径
+            for path in paths:
+                if path not in placed:
+                    unplaced.append(path)
+            
+            paths = unplaced
+            unplaced = []
+        
+            # 7. 构建当前批次的放置结果
+            for i, placement in enumerate(placements):
+                # 找到对应的原始路径
+                original_path = placed[i]
+                
+                # 创建放置后的路径
+                placed_path = []
+                for point in original_path:
+                    placed_path.append({
+                        'x': point['x'] + placement['x'],
+                        'y': point['y'] + placement['y']
+                    })
+                
+                placed_paths.append({
+                    'path': placed_path,
+                    'rotation': placement.get('rotation', 0)
+                })
+        
+        print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
+        return placed_paths, unplaced
+
+    def _move_path(self, path: List[Dict], position: Dict) -> List[Dict]:
+        """移动路径到指定位置
+        
+        Args:
+            path: 要移动的路径
+            position: 目标位置
+            
+        Returns:
+            移动后的路径
+        """
+        moved_path = []
+        for point in path:
+            moved_path.append({
+                'x': point['x'] + position['x'],
+                'y': point['y'] + position['y']
+            })
+        return moved_path
 
     def _is_valid_polygon(self, polygon: List[Dict]) -> bool:
         """检查多边形是否有效
@@ -483,12 +604,7 @@ class PlacementWorker:
                 if abs(x) > 1e12 or abs(y) > 1e12:
                     print("_is_valid_polygon: 坐标值过大")
                     return False
-                    
-            # 检查是否闭合
-            if not GeometryUtil.almost_equal(valid_points[0]['x'], valid_points[-1]['x'], 0.1) or \
-               not GeometryUtil.almost_equal(valid_points[0]['y'], valid_points[-1]['y'], 0.1):
-                print("_is_valid_polygon: 多边形未闭合")
-                return False
+                
                 
             # 检查是否有重复点
             for i in range(len(valid_points)-1):

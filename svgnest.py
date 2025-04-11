@@ -343,6 +343,7 @@ class SvgNest:
         from xml.dom import minidom
 
         print("apply_placement: 开始生成SVG...")
+        print(f"apply_placement: 输入数据: {placements}")
 
         # 创建一个新的SVG文档
         doc = minidom.Document()
@@ -367,12 +368,31 @@ class SvgNest:
         svg.appendChild(bin_element)
 
         # 验证放置结果
-        if not placements or not isinstance(placements, dict):
+        if not placements:
             print("apply_placement: 无效的放置结果")
             return doc.toxml()
 
-        paths = placements.get('paths', [])
-        placement_info = placements.get('placements', [])
+        # 处理放置结果
+        if isinstance(placements, dict):
+            # 如果是字典格式的结果
+            paths = placements.get('paths', [])
+            placement_info = placements.get('placements', [])
+            print(f"apply_placement: 字典格式，路径数量={len(paths)}，放置信息数量={len(placement_info)}")
+        else:
+            # 如果是列表格式的结果
+            paths = []
+            placement_info = []
+            for placement in placements:
+                if isinstance(placement, dict):
+                    path = placement.get('path', [])
+                    if path:  # 只添加非空路径
+                        paths.append(path)
+                        placement_info.append({
+                            'x': placement.get('x', 0),
+                            'y': placement.get('y', 0),
+                            'rotation': placement.get('rotation', 0)
+                        })
+            print(f"apply_placement: 列表格式，路径数量={len(paths)}，放置信息数量={len(placement_info)}")
 
         print(f"apply_placement: 处理 {len(paths)} 个路径")
 
@@ -404,8 +424,11 @@ class SvgNest:
                     if not isinstance(point, dict) or 'x' not in point or 'y' not in point:
                         print(f"apply_placement: 路径 {i} 点 {j} 格式无效")
                         continue
+                    # 计算相对于容器的坐标
+                    px = point['x']
+                    py = point['y']
                     cmd = 'M' if j == 0 else 'L'
-                    d.append(f"{cmd} {point['x']},{point['y']}")
+                    d.append(f"{cmd} {px},{py}")
 
                 if not d:  # 如果没有有效点，跳过
                     print(f"apply_placement: 路径 {i} 没有有效点")
@@ -416,10 +439,13 @@ class SvgNest:
 
                 # 创建组元素
                 g = doc.createElement('g')
-                transform = f"translate({x},{y})"
                 if rotation != 0:
-                    transform += f" rotate({rotation})"
-                g.setAttribute('transform', transform)
+                    # 计算旋转中心点
+                    bounds = GeometryUtil.get_polygon_bounds(path)
+                    center_x = bounds['x'] + bounds['width'] / 2
+                    center_y = bounds['y'] + bounds['height'] / 2
+                    # 应用旋转
+                    g.setAttribute('transform', f"rotate({rotation}, {center_x + x}, {center_y + y})")
 
                 # 创建路径元素
                 path_element = doc.createElement('path')
@@ -644,8 +670,8 @@ class SvgNest:
                 original_path = valid_paths[i]
 
                 # 计算变换参数
-                dx = placed_path['path'][0]['x'] - original_path.polygon[0]['x']
-                dy = placed_path['path'][0]['y'] - original_path.polygon[0]['y']
+                dx = placed_path['path'][0]['x'] - original_path[0]['x']
+                dy = placed_path['path'][0]['y'] - original_path[0]['y']
 
                 # 添加放置信息
                 result['placements'].append({
@@ -802,15 +828,6 @@ def main(svg_file: str):
             return
         print("SVG parsed successfully")
 
-        # # 打印元素的基本信息
-        # print(svg.nodeName)  # 元素名称
-        # print(svg.attributes.items())  # 元素的属性
-        #
-        # # 打印所有子节点
-        # for child in svg.childNodes:
-        #     if child.nodeType == child.ELEMENT_NODE:  # 仅处理元素节点
-        #         print(child.nodeName, child.attributes.items())
-
         # 找到第一个矩形作为容器
         print("Looking for container rectangle...")
         bin_element = None
@@ -854,22 +871,13 @@ def main(svg_file: str):
 
         print("Generating placement results...")
         try:
-            if nester.best and 'placements' in nester.best:
-                # 获取布局结果
-                placements = nester.best['placements']
-                if isinstance(placements, list) and len(placements) > 0:
-                    # 如果是列表的列表，取第一个布局
-                    if isinstance(placements[0], list):
-                        placements = placements[0]
-
-                    # 将布局应用到SVG
-                    output_svg = nester.apply_placement(placements)
-                    output_file = os.path.join("output", "placement.svg")
-                    with open(output_file, 'w', encoding='utf-8') as f:
-                        f.write(output_svg)
-                    print(f"Generated placement results in {output_file}")
-                else:
-                    print("No valid placements found in best result")
+            if nester.best:
+                # 将完整的结果传递给apply_placement
+                output_svg = nester.apply_placement(nester.best)
+                output_file = os.path.join("output", "placement.svg")
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(output_svg)
+                print(f"Generated placement results in {output_file}")
             else:
                 print("No valid placement results found")
         except Exception as e:
