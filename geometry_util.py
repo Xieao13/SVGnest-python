@@ -139,73 +139,76 @@ class GeometryUtil:
 
 
     @staticmethod
-    def compute_nfp(polygon_a, polygon_b, inside=False):
+    def no_fit_polygon(polygon_a, polygon_b, inside=False):
         """
         计算两个多边形之间的NFP（No-Fit Polygon）
 
         参数:
-            polygon_a: 主多边形 [{'x':x1, 'y':y1}, ...]
-            polygon_b: 移动多边形
+            polygon_a: 静止多边形 [{'x':x1, 'y':y1}, ...]
+            polygon_b: 移动多边形（参考点为最左下角点）
             inside: 是否计算内部NFP (True=内部, False=外部)
 
         返回:
             NFP多边形顶点列表 [{'x':x1, 'y':y1}, ...] 或 None
         """
         # 输入验证
-        if not polygon_a or not polygon_b:
+        if not polygon_a or not polygon_b or len(polygon_a) < 3 or len(polygon_b) < 3:
             return None
 
-        # 转换坐标格式
-        a_path = [(p['x'], p['y']) for p in polygon_a]
-        b_path = [(p['x'], p['y']) for p in polygon_b]
+        # 计算多边形的边界框
+        def get_bounds(poly):
+            xs = [p['x'] for p in poly]
+            ys = [p['y'] for p in poly]
+            return {
+                'minx': min(xs),
+                'maxx': max(xs),
+                'miny': min(ys),
+                'maxy': max(ys),
+                'width': max(xs) - min(xs),
+                'height': max(ys) - min(ys)
+            }
 
-        pc = pyclipper.Pyclipper()
+        # 获取边界框
+        bounds_a = get_bounds(polygon_a)
+        bounds_b = get_bounds(polygon_b)
+
+        # 获取B的参考点（最左下角点）
+        ref_point = {'x': bounds_b['minx'], 'y': bounds_b['miny']}
 
         if inside:
             # ===== 内部NFP计算 =====
-            # 1. 计算B的包围盒尺寸
-            b_min_x = min(x for x, y in b_path)
-            b_max_x = max(x for x, y in b_path)
-            b_min_y = min(y for x, y in b_path)
-            b_max_y = max(y for x, y in b_path)
-            b_width = b_max_x - b_min_x
-            b_height = b_max_y - b_min_y
-
-            # 2. 将A向内偏移B的尺寸
-            offset = pyclipper.PyclipperOffset()
-            offset.AddPath(a_path, pyclipper.JT_MITER, pyclipper.ET_CLOSEDPOLYGON)
-            a_inner = offset.Execute(-max(b_width, b_height) / 2)  # 保守偏移
-
-            if not a_inner:
-                return None  # 偏移后无有效区域
-
-            # 3. 返回偏移后的多边形（即B可放置区域）
-            return [{'x': x, 'y': y} for (x, y) in a_inner[0]]
+            # 对于内部NFP，参考点可以移动的范围是A的内部区域减去B的尺寸
+            # 右边界 = A的右边界 - B的宽度
+            # 上边界 = A的上边界 - B的高度
+            nfp = [
+                {'x': bounds_a['maxx'] - bounds_b['width'], 'y': bounds_a['maxy'] - bounds_b['height']},  # 右上
+                {'x': bounds_a['minx'], 'y': bounds_a['maxy'] - bounds_b['height']},  # 左上
+                {'x': bounds_a['minx'], 'y': bounds_a['miny']},  # 左下
+                {'x': bounds_a['maxx'] - bounds_b['width'], 'y': bounds_a['miny']}  # 右下
+            ]
+            
+            # 确保内部NFP为逆时针方向
+            if GeometryUtil.polygon_area(nfp) > 0:
+                nfp.reverse()
+            
+            return nfp
 
         else:
             # ===== 外部NFP计算 =====
-            # 1. 计算Minkowski差 A ⊕ (-B)
-            b_reversed = [(x, -y) for (x, y) in b_path]  # 反转Y轴
-
-            pc.AddPath(a_path, pyclipper.PT_SUBJECT, True)
-            pc.AddPath(b_reversed, pyclipper.PT_CLIP, True)
-
-            # 2. 执行并集运算
-            solution = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO)
-
-            if not solution:
-                return None
-
-            # 3. 返回最大轮廓（自动处理自相交）
-            max_area = 0
-            result = None
-            for path in solution:
-                area = abs(pyclipper.Area(path))
-                if area > max_area:
-                    max_area = area
-                    result = path
-
-            return [{'x': x, 'y': y} for (x, y) in result]
+            # 对于外部NFP，参考点可以移动的范围是A的外部轮廓
+            # 注意：参考点是B的最左下角点，所以需要考虑B的尺寸
+            nfp = [
+                {'x': bounds_a['minx'] - bounds_b['width'], 'y': bounds_a['maxy']},  # 左上
+                {'x': bounds_a['minx'] - bounds_b['width'], 'y': bounds_a['miny'] - bounds_b['height']},  # 左下
+                {'x': bounds_a['maxx'], 'y': bounds_a['miny'] - bounds_b['height']},  # 右下
+                {'x': bounds_a['maxx'], 'y': bounds_a['maxy']}  # 右上
+            ]
+            
+            # 确保外部NFP为顺时针方向
+            if GeometryUtil.polygon_area(nfp) > 0:
+                nfp.reverse()
+            
+            return nfp
 
     @staticmethod
     def convex_hull(points):
@@ -746,15 +749,32 @@ if __name__ == "__main__":
 
     # 计算外部NFP
     print("外部NFP:")
-    external_nfp = GeometryUtil.compute_nfp(polygon_a, polygon_b, inside=False)
+    external_nfp = GeometryUtil.no_fit_polygon(polygon_a, polygon_b, inside=False)
     for p in external_nfp:
         print(f"({p['x']:.2f}, {p['y']:.2f})")
 
     # 计算内部NFP
     print("\n内部NFP:")
-    internal_nfp = GeometryUtil.compute_nfp(polygon_a, polygon_b, inside=True)
+    internal_nfp = GeometryUtil.no_fit_polygon(polygon_a, polygon_b, inside=True)
     if internal_nfp:
         for p in internal_nfp:
             print(f"({p['x']:.2f}, {p['y']:.2f})")
     else:
         print("无有效内部NFP区域")
+    
+    # 用画图形式画出Polygon A和Polygon B以及NFP
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.plot([p['x'] for p in polygon_a] + [polygon_a[0]['x']], [p['y'] for p in polygon_a] + [polygon_a[0]['y']],
+            label='Polygon A')
+    ax.plot([p['x'] for p in polygon_b] + [polygon_b[0]['x']], [p['y'] for p in polygon_b] + [polygon_b[0]['y']],
+            label='Polygon B')
+    if internal_nfp:
+        ax.plot([p['x'] for p in internal_nfp] + [internal_nfp[0]['x']],
+                [p['y'] for p in internal_nfp] + [internal_nfp[0]['y']], label='Internal NFP')
+    if external_nfp:
+        ax.plot([p['x'] for p in external_nfp] + [external_nfp[0]['x']],
+                [p['y'] for p in external_nfp] + [external_nfp[0]['y']], label='External NFP')
+    ax.legend()
+    plt.show()
