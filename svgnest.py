@@ -702,7 +702,7 @@ class SvgNest:
                     rotated_polygon = path[offset:] + path[:offset]
                     nfp = GeometryUtil.no_fit_polygon(bin_polygon, rotated_polygon, inside=True)
                     if nfp and len(nfp) >= 3:
-                        key = (-1, i)
+                        key = f"bin,{i}"
                         nfp_cache[key] = nfp
                         print(f"calculate_nfp_cache: 成功计算路径 {i} 与容器的NFP")
                         break
@@ -729,7 +729,7 @@ class SvgNest:
                                     GeometryUtil.almost_equal(nfp[0]['y'], nfp[-1]['y'])):
                                 nfp.append(nfp[0])
 
-                            key = (i,j)
+                            key = f"{i},{j}"
                             nfp_cache[key] = nfp
                             print(f"calculate_nfp_cache: 成功计算路径 {i} 和 {j} 之间的NFP")
                             break
