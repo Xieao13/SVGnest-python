@@ -351,6 +351,7 @@ class PlacementWorker:
         rotated = []
         for i, path in enumerate(paths):
             r = rotate_polygon(path, self.rotations[i])
+            r.rotation= self.rotations[i]
             rotated.append(r)
         paths = rotated
 
@@ -497,17 +498,16 @@ class PlacementWorker:
                 original_path = placed[i]
 
                 # 创建放置后的路径
-                placed_path = []
+                CustomList = type('CustomList', (list,), {})
+                placed_path = CustomList()
                 for point in original_path:
                     placed_path.append({
                         'x': point['x'] + placement['x'],
                         'y': point['y'] + placement['y']
                     })
-
-                placed_paths.append({
-                    'path': placed_path,
-                })
-
+                placed_path.id = original_path.id
+                placed_path.rotation = original_path.rotation
+                placed_paths.append(placed_path)
         print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
         return placed_paths, unplaced, max_area
 

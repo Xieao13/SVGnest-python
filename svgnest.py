@@ -2,6 +2,7 @@
 
 import math
 import time
+import json
 from typing import List, Dict, Any, Optional, Callable, Union
 import pyclipper
 from geometry_util import GeometryUtil
@@ -12,6 +13,7 @@ from lxml import etree
 from copy import deepcopy
 import sys
 import os
+from tqdm import tqdm
 
 
 class SvgNest:
@@ -43,6 +45,45 @@ class SvgNest:
         self.best = None
         self.worker_timer = None
         self.progress = 0
+
+    def load_from_jsonl(self, instance):
+        """从JSONL实例加载数据"""
+        # 设置容器
+        bin_width, bin_height = instance['bin']
+        self.bin_bounds = {
+            'x': 0,
+            'y': 0,
+            'width': bin_width,
+            'height': bin_height
+        }
+        
+        # 创建容器多边形
+        self.bin_polygon = [
+            {'x': 0, 'y': 0},
+            {'x': bin_width, 'y': 0},
+            {'x': bin_width, 'y': bin_height},
+            {'x': 0, 'y': bin_height},
+            {'x': 0, 'y': 0}
+        ]
+        
+        # 创建零件多边形
+        self.parts = []
+        for i, part in enumerate(instance['parts']):
+            width, height = part
+            # 创建自定义列表类
+            CustomList = type('CustomList', (list,), {})
+            polygon = CustomList([
+                {'x': 0, 'y': 0},
+                {'x': width, 'y': 0},
+                {'x': width, 'y': height},
+                {'x': 0, 'y': height},
+                {'x': 0, 'y': 0}
+            ])
+            polygon.id = i
+
+            self.parts.append(polygon)
+        
+        return True
 
     @property
     def config(self):
@@ -458,32 +499,35 @@ class SvgNest:
                 flat.extend(self._flatten_tree(node.children, not hole))
         return flat
 
-    def start(self) -> bool:
+    def start(self,is_svg=True) -> bool:
         """开始布局计算"""
-        if not self.svg or not self.bin:
-            return False
+        if is_svg:
+            if not self.svg or not self.bin:
+                return False
 
-        # 设置工作状态为True
-        self.working = True
+            # 设置工作状态为True
+            self.working = True
 
-        self.parts = list(self.svg.childNodes)
-        try:
-            bin_index = self.parts.index(self.bin)
-            self.parts.pop(bin_index)
-        except ValueError:
-            pass
+            self.parts = list(self.svg.childNodes)
+            try:
+                bin_index = self.parts.index(self.bin)
+                self.parts.pop(bin_index)
+            except ValueError:
+                pass
 
-        # 构建不含bin的树
-        self.tree = self.get_parts(self.parts[:])
+            # 构建不含bin的树
+            self.tree = self.get_parts(self.parts[:])
 
-        # 偏移处理
-        self._offset_tree(self.tree, 0.5 * self.config['spacing'])
+            # 偏移处理
+            self._offset_tree(self.tree, 0.5 * self.config['spacing'])
 
-        # 处理容器多边形
-        parser = SvgParser()
-        self.bin_polygon = parser.polygonify(self.bin)
-        self.bin_polygon = self.clean_polygon(self.bin_polygon)
+            # 处理容器多边形
+            parser = SvgParser()
+            self.bin_polygon = parser.polygonify(self.bin)
+            self.bin_polygon = self.clean_polygon(self.bin_polygon)
 
+        else:
+            self.tree = self.parts
         if not self.bin_polygon or len(self.bin_polygon) < 3:
             return False
 
@@ -533,7 +577,7 @@ class SvgNest:
             if not self.working:
                 # 添加迭代计数器
                 iteration = 0
-                max_iterations = 50  # 最大迭代次数
+                max_iterations = 10  # 最大迭代次数
                 best_efficiency = 0
                 
                 while iteration < max_iterations and not self.working:
@@ -552,6 +596,7 @@ class SvgNest:
                 self.working = False
 
         worker()  # 立即开始第一次计算
+        self.GA = None
         return True
 
     def _offset_tree(self, tree: List, offset: float):
@@ -649,7 +694,7 @@ class SvgNest:
                 return False
 
             # 计算性能
-            placed_area = sum(abs(GeometryUtil.polygon_area(path['path'])) for path in placed)
+            placed_area = sum(abs(GeometryUtil.polygon_area(path)) for path in placed)
             efficiency = placed_area / max_area if bin_area > 0 else 0
 
             print(f"launch_workers: 放置完成，利用率={efficiency:.2%}")
@@ -662,31 +707,10 @@ class SvgNest:
             if not self.best or efficiency > self.best.get('efficiency', 0):
                 # 构建结果
                 result = {
-                    'placements': [],
-                    'paths': [],
+                    'paths': placed,
                     'unplaced': unplaced,
                     'efficiency': efficiency
                 }
-
-                # 添加每个已放置的路径
-                for i, placed_path in enumerate(placed):
-                    # 获取原始路径
-                    original_path = placelist[i]
-
-                    # 计算变换参数
-                    dx = placed_path['path'][0]['x'] - original_path[0]['x']
-                    dy = placed_path['path'][0]['y'] - original_path[0]['y']
-
-                    # 添加放置信息
-                    result['placements'].append({
-                        'x': dx,
-                        'y': dy,
-                        'rotation': placed_path.get('rotation', 0),
-                        'id': i
-                    })
-
-                    # 添加路径数据
-                    result['paths'].append(placed_path['path'])
 
                 # 保存结果
                 self.best = result
@@ -765,103 +789,163 @@ class SvgNest:
         return nfp_cache
 
 
-def main(svg_file: str):
+def main(input_file: str, output_file: str):
     """主函数"""
-    print(f"Processing file: {svg_file}")
+    print(f"Processing file: {input_file}")
 
-    if not os.path.exists(svg_file):
-        print(f"Error: File {svg_file} not found")
+    if not os.path.exists(input_file):
+        print(f"Error: File {input_file} not found")
         return
+    
+    if '.svg' in input_file:
 
-    # 读取SVG文件
-    print("Reading SVG file...")
-    with open(svg_file, 'r', encoding='utf-8') as f:
-        svg_content = f.read()
-    if not svg_content:
-        print("Error: Failed to read SVG file")
-        return
-
-    # 创建SvgNest实例
-    print("Initializing SvgNest...")
-    nester = SvgNest()
-
-    # 配置参数
-    config = {
-        'spacing': 0,
-        'rotations': 4,
-        'populationSize': 5,
-        'mutationRate': 50,
-        'useHoles': True,
-        'exploreConcave': False
-    }
-    print(f"Configuring with parameters: {config}")
-    nester.set_config(config)
-
-    try:
-        # ====================================解析SVG=====================================
-        print("Parsing SVG content...")
-        svg = nester.parse_svg(svg_content)
-        if not svg:
-            print("Error: Failed to parse SVG - svg is None")
-            return
-        print("SVG parsed successfully")
-
-        # 找到第一个矩形作为容器
-        print("Looking for container rectangle...")
-        bin_element = None
-        rect_elements = svg.getElementsByTagName('rect')
-        print(f"Found {len(rect_elements)} rectangle elements")
-
-        if rect_elements:
-            bin_element = rect_elements[0]
-            print(f"Container rectangle found: {bin_element.toxml()}")
-
-        if not bin_element:
-            print("Error: No container rectangle found in SVG")
+        # 读取SVG文件
+        print("Reading SVG file...")
+        with open(input_file, 'r', encoding='utf-8') as f:
+            svg_content = f.read()
+        if not svg_content:
+            print("Error: Failed to read SVG file")
             return
 
-        # 设置容器
-        print("Setting container...")
-        nester.set_bin(bin_element)
+        # 创建SvgNest实例
+        print("Initializing SvgNest...")
+        nester = SvgNest()
 
-        # =================================开始布局计算===================================
-        print("Starting placement calculation...")
+        # 配置参数
+        config = {
+            'spacing': 0,
+            'rotations': 4,
+            'populationSize': 5,
+            'mutationRate': 50,
+            'useHoles': True,
+            'exploreConcave': False
+        }
+        print(f"Configuring with parameters: {config}")
+        nester.set_config(config)
 
-        result = nester.start()
-        if result:
-            print("Placement calculation started successfully")
-        else:
-            print("Error: Failed to start placement calculation")
-            return
-
-        # ==================================生成svg结果===================================
-        print("Creating output directory: output")
-        os.makedirs("output", exist_ok=True)
-
-        print("Generating placement results...")
         try:
-            if nester.best:
-                # 将完整的结果传递给apply_placement
-                output_svg = nester.apply_placement(nester.best)
-                output_file = os.path.join("output", "placement.svg")
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    f.write(output_svg)
-                print(f"Generated placement results in {output_file}")
+            # ====================================解析SVG=====================================
+            print("Parsing SVG content...")
+            svg = nester.parse_svg(svg_content)
+            if not svg:
+                print("Error: Failed to parse SVG - svg is None")
+                return
+            print("SVG parsed successfully")
+
+            # 找到第一个矩形作为容器
+            print("Looking for container rectangle...")
+            bin_element = None
+            rect_elements = svg.getElementsByTagName('rect')
+            print(f"Found {len(rect_elements)} rectangle elements")
+
+            if rect_elements:
+                bin_element = rect_elements[0]
+                print(f"Container rectangle found: {bin_element.toxml()}")
+
+            if not bin_element:
+                print("Error: No container rectangle found in SVG")
+                return
+
+            # 设置容器
+            print("Setting container...")
+            nester.set_bin(bin_element)
+
+            # =================================开始布局计算===================================
+            print("Starting placement calculation...")
+
+            result = nester.start()
+            if result:
+                print("Placement calculation started successfully")
             else:
-                print("No valid placement results found")
+                print("Error: Failed to start placement calculation")
+                return
+
+            # ==================================生成svg结果===================================
+            print("Creating output directory: output")
+            os.makedirs("output", exist_ok=True)
+
+            print("Generating placement results...")
+            try:
+                if nester.best:
+                    # 将完整的结果传递给apply_placement
+                    output_svg = nester.apply_placement(nester.best)
+                    output_file = os.path.join("output", "placement.svg")
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(output_svg)
+                    print(f"Generated placement results in {output_file}")
+                else:
+                    print("No valid placement results found")
+            except Exception as e:
+                print(f"Error generating placement results: {e}")
+                import traceback
+                traceback.print_exc()
+
         except Exception as e:
-            print(f"Error generating placement results: {e}")
+            print(f"Error: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            print("Program completed")
+    elif '.jsonl' in input_file:
+        # 创建SvgNest实例
+        print("Initializing SvgNest...")
+        nester = SvgNest()
 
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        print("Program completed")
+        # 配置参数
+        config = {
+            'spacing': 0,
+            'rotations': 4,
+            'populationSize': 10,
+            'mutationRate': 10,
+            'useHoles': True,
+            'exploreConcave': False
+        }
+        print(f"Configuring with parameters: {config}")
+        nester.set_config(config)
+
+        # 读取并处理每个实例
+        with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
+            lines=f_in.readlines()
+            for line in tqdm(lines, total=len(lines), desc="Processing instances"):
+                instance = json.loads(line)
+                print(f"Processing instance with bin size: {instance['bin']}")
+                
+                # 加载实例数据
+                if not nester.load_from_jsonl(instance):
+                    print("Error: Failed to load instance data")
+                    continue
+                
+                # 开始布局计算
+                print("Starting placement calculation...")
+                result = nester.start(is_svg=False)
+                if not result:
+                    print("Error: Failed to start placement calculation")
+                    continue
+                
+
+                # 获取最佳结果
+                if nester.best:
+                    # 提取零件顺序
+                    placement_order = [p.id for p in nester.best['paths']]
+                    placement_rotation = [p.rotation for p in nester.best['paths']]
+                    result = {
+                        'bin': instance['bin'],
+                        'parts': instance['parts'],
+                        'placement_order': placement_order,
+                        'rotation': placement_rotation,
+                        'efficiency': nester.best['efficiency']
+                    }
+                    # 写入结果
+                    f_out.write(json.dumps(result) + '\n')
+                    print(f"Instance processed successfully, efficiency: {nester.best['efficiency']:.2%}")
+                else:
+                    print("No valid placement results found")
+
 
 
 if __name__ == '__main__':
     svg_file = "input.svg"
-    main(svg_file)
+    jsonl_file = "output/instances.jsonl"
+    output_file = "output/placement.jsonl"
+    main(jsonl_file, output_file)
+    # main(svg_file, output_file)
