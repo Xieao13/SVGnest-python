@@ -508,6 +508,10 @@ class PlacementWorker:
                 placed_path.id = original_path.id
                 placed_path.rotation = original_path.rotation
                 placed_paths.append(placed_path)
+
+
+
+
         print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
         return placed_paths, unplaced, max_area
 

@@ -48,6 +48,10 @@ class SvgNest:
 
     def load_from_jsonl(self, instance):
         """从JSONL实例加载数据"""
+        # 清空svgnest 重新初始化
+        self.__init__()
+
+
         # 设置容器
         bin_width, bin_height = instance['bin']
         self.bin_bounds = {
@@ -168,11 +172,6 @@ class SvgNest:
 
         parser = SvgParser()
         parser.config({'tolerance': self._config['curveTolerance']})
-
-        self.best = None
-        self.nfp_cache = {}
-        self.bin_polygon = None
-        self.GA = None
 
         return self._config
 
@@ -698,6 +697,8 @@ class SvgNest:
             efficiency = placed_area / max_area if bin_area > 0 else 0
 
             print(f"launch_workers: 放置完成，利用率={efficiency:.2%}")
+            if efficiency>=1:
+                print(f"出错啦！{bin_polygon}，{tree}")
             print(f"launch_workers: 已放置 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
 
             # 更新个体的适应度
@@ -904,7 +905,7 @@ def main(input_file: str, output_file: str):
         nester.set_config(config)
 
         # 读取并处理每个实例
-        with open(input_file, 'r') as f_in, open(output_file, 'w') as f_out:
+        with open(input_file, 'r') as f_in, open(output_file, 'a') as f_out:
             lines=f_in.readlines()
             for line in tqdm(lines, total=len(lines), desc="Processing instances"):
                 instance = json.loads(line)
@@ -914,7 +915,8 @@ def main(input_file: str, output_file: str):
                 if not nester.load_from_jsonl(instance):
                     print("Error: Failed to load instance data")
                     continue
-                
+
+                nester.set_config(config)
                 # 开始布局计算
                 print("Starting placement calculation...")
                 result = nester.start(is_svg=False)
@@ -943,9 +945,10 @@ def main(input_file: str, output_file: str):
 
 
 
+
 if __name__ == '__main__':
     svg_file = "input.svg"
     jsonl_file = "output/instances.jsonl"
-    output_file = "output/placement.jsonl"
+    output_file = "output/placement—0412.jsonl"
     main(jsonl_file, output_file)
     # main(svg_file, output_file)
