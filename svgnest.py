@@ -51,7 +51,6 @@ class SvgNest:
         # 清空svgnest 重新初始化
         self.__init__()
 
-
         # 设置容器
         bin_width, bin_height = instance['bin']
         self.bin_bounds = {
@@ -60,7 +59,7 @@ class SvgNest:
             'width': bin_width,
             'height': bin_height
         }
-        
+
         # 创建容器多边形
         self.bin_polygon = [
             {'x': 0, 'y': 0},
@@ -69,7 +68,7 @@ class SvgNest:
             {'x': 0, 'y': bin_height},
             {'x': 0, 'y': 0}
         ]
-        
+
         # 创建零件多边形
         self.parts = []
         for i, part in enumerate(instance['parts']):
@@ -86,7 +85,7 @@ class SvgNest:
             polygon.id = i
 
             self.parts.append(polygon)
-        
+
         return True
 
     @property
@@ -498,7 +497,7 @@ class SvgNest:
                 flat.extend(self._flatten_tree(node.children, not hole))
         return flat
 
-    def start(self,is_svg=True) -> bool:
+    def start(self, is_svg=True) -> bool:
         """开始布局计算"""
         if is_svg:
             if not self.svg or not self.bin:
@@ -578,18 +577,18 @@ class SvgNest:
                 iteration = 0
                 max_iterations = 10  # 最大迭代次数
                 best_efficiency = 0
-                
+
                 while iteration < max_iterations and not self.working:
                     print(f"\n开始第 {iteration + 1} 次迭代...")
                     self.launch_workers(self.tree, self.bin_polygon, self.config)
-                    
+
                     # 更新最佳效率
                     if self.best and self.best.get('efficiency', 0) > best_efficiency:
                         best_efficiency = self.best['efficiency']
                         print(f"找到新的最佳解，效率={best_efficiency:.2%}")
-                    
+
                     iteration += 1
-                
+
                 print(f"\n迭代结束，共进行 {iteration} 次迭代")
                 print(f"最终效率={best_efficiency:.2%}")
                 self.working = False
@@ -686,7 +685,7 @@ class SvgNest:
         # 执行放置计算
         try:
             # 执行放置计算
-            placed, unplaced, max_area= worker.place_paths()
+            placed, unplaced, max_area = worker.place_paths()
 
             if not placed:
                 print("launch_workers: 放置计算失败")
@@ -697,12 +696,12 @@ class SvgNest:
             efficiency = placed_area / max_area if bin_area > 0 else 0
 
             print(f"launch_workers: 放置完成，利用率={efficiency:.2%}")
-            if efficiency>=1:
+            if efficiency >= 1:
                 print(f"出错啦！{bin_polygon}，{tree}")
             print(f"launch_workers: 已放置 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
 
             # 更新个体的适应度
-            individual.fitness = 1-efficiency  # 适应度越小越好
+            individual.fitness = 1 - efficiency  # 适应度越小越好
 
             # 更新最佳结果
             if not self.best or efficiency > self.best.get('efficiency', 0):
@@ -797,7 +796,7 @@ def main(input_file: str, output_file: str):
     if not os.path.exists(input_file):
         print(f"Error: File {input_file} not found")
         return
-    
+
     if '.svg' in input_file:
 
         # 读取SVG文件
@@ -906,11 +905,11 @@ def main(input_file: str, output_file: str):
 
         # 读取并处理每个实例
         with open(input_file, 'r') as f_in, open(output_file, 'a') as f_out:
-            lines=f_in.readlines()
+            lines = f_in.readlines()
             for line in tqdm(lines, total=len(lines), desc="Processing instances"):
                 instance = json.loads(line)
                 print(f"Processing instance with bin size: {instance['bin']}")
-                
+
                 # 加载实例数据
                 if not nester.load_from_jsonl(instance):
                     print("Error: Failed to load instance data")
@@ -923,7 +922,6 @@ def main(input_file: str, output_file: str):
                 if not result:
                     print("Error: Failed to start placement calculation")
                     continue
-                
 
                 # 获取最佳结果
                 if nester.best:
@@ -944,11 +942,9 @@ def main(input_file: str, output_file: str):
                     print("No valid placement results found")
 
 
-
-
 if __name__ == '__main__':
     svg_file = "input.svg"
-    jsonl_file = "output/instances.jsonl"
+    # jsonl_file = "output/instances.jsonl"
     output_file = "output/placement—0412.jsonl"
-    main(jsonl_file, output_file)
-    # main(svg_file, output_file)
+    # main(jsonl_file, output_file)
+    main(svg_file, output_file)
