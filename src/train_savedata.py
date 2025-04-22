@@ -504,7 +504,7 @@ def main():
     hidden_dim = 128
 
     # 获取最大序列长度
-    max_seq_len = max(len(item['parts']) for i in range(len(dataset)) for item in [dataset[i]])
+    max_seq_len = 50
     logger.info(f"Maximum sequence length: {max_seq_len}")
 
     # 创建模型
