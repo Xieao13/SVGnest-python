@@ -945,6 +945,6 @@ def main(input_file: str, output_file: str):
 if __name__ == '__main__':
     svg_file = "input.svg"
     # jsonl_file = "output/instances.jsonl"
-    output_file = "output/placement—0412.jsonl"
+    output_file = "output/placement-0412.jsonl"
     # main(jsonl_file, output_file)
     main(svg_file, output_file)
