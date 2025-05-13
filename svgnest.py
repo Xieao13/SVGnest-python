@@ -630,51 +630,28 @@ class SvgNest:
 
         print(f"launch_workers: 容器多边形有效，面积={bin_area}")
 
-        # 计算所有路径的总面积
-        total_area = 0
-        valid_paths = []
-        for path in tree:
-            path_area = abs(GeometryUtil.polygon_area(path))
-            if path_area > 1e-6:
-                total_area += path_area
-                valid_paths.append(path)
-
-        if not valid_paths:
-            print("launch_workers: 没有有效的路径")
+        # 加载预测结果
+        prediction = self.load_prediction("src/results/predictions_20250508_145445.jsonl")
+        if not prediction:
+            print("launch_workers: 无法加载预测结果")
             return False
 
-        print(f"launch_workers: 有效路径数量={len(valid_paths)}，总面积={total_area}")
-
-        # 初始化遗传算法
-        if self.GA is None:
-            print("launch_workers: 初始化遗传算法...")
-            # 按面积从大到小排序作为初始个体
-            valid_paths.sort(key=lambda x: abs(GeometryUtil.polygon_area(x)), reverse=True)
-            self.GA = GeneticAlgorithm(valid_paths, bin_polygon, config)
-
-        # 获取当前需要评估的个体
-        individual = None
-        for ind in self.GA.population:
-            if not hasattr(ind, 'fitness') or ind.fitness is None:
-                individual = ind
-                break
-
-        if individual is None:
-            # 所有个体都已评估，开始下一代
-            print("launch_workers: 开始新一代...")
-            self.GA.generation()
-            individual = self.GA.population[1]  # 使用第二个个体开始新的一代
-
-        # 获取当前个体的放置顺序和旋转角度
-        placelist = individual.placement
-        rotations = individual.rotation
-
+        # 根据预测结果重新排序路径
+        placement_order = prediction['predicted_placement']
+        rotations = prediction['predicted_rotation']
+        
         # 创建放置工作器
         try:
+            # 按预测顺序重新排列路径
+            ordered_paths = [tree[i] for i in placement_order]
+            # 设置旋转角度
+            for path, rotation in zip(ordered_paths, rotations):
+                path.rotation = rotation
+
             worker = PlacementWorker(
                 bin_polygon=bin_polygon,
-                paths=placelist,
-                ids=[i for i in range(len(placelist))],
+                paths=ordered_paths,
+                ids=[i for i in range(len(ordered_paths))],
                 rotations=rotations,
                 config=config,
             )
@@ -700,20 +677,13 @@ class SvgNest:
                 print(f"出错啦！{bin_polygon}，{tree}")
             print(f"launch_workers: 已放置 {len(placed)} 个路径，未放置 {len(unplaced)} 个路径")
 
-            # 更新个体的适应度
-            individual.fitness = 1 - efficiency  # 适应度越小越好
-
             # 更新最佳结果
-            if not self.best or efficiency > self.best.get('efficiency', 0):
-                # 构建结果
-                result = {
-                    'paths': placed,
-                    'unplaced': unplaced,
-                    'efficiency': efficiency
-                }
-
-                # 保存结果
-                self.best = result
+            result = {
+                'paths': placed,
+                'unplaced': unplaced,
+                'efficiency': efficiency
+            }
+            self.best = result
 
             return True
 
@@ -787,6 +757,19 @@ class SvgNest:
 
         print(f"calculate_nfp_cache: 完成，共计算 {len(nfp_cache)} 个NFP")
         return nfp_cache
+
+    def load_prediction(self, prediction_file: str) -> Dict:
+        """从预测文件加载第一个预测结果"""
+        print("load_prediction: 开始加载预测结果...")
+        try:
+            with open(prediction_file, 'r') as f:
+                for line in f:
+                    prediction = json.loads(line)
+                    print(f"load_prediction: 成功加载预测结果: {prediction}")
+                    return prediction
+        except Exception as e:
+            print(f"load_prediction: 加载预测结果时出错: {e}")
+            return None
 
 
 def main(input_file: str, output_file: str):

@@ -11,6 +11,8 @@ import sys
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import wandb  # 添加 wandb 导入
+import argparse
+import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -83,6 +85,10 @@ class PolicyNetwork(nn.Module):
 
         # 初始化权重
         nn.init.kaiming_normal_(self.rotation_output.weight)
+        nn.init.kaiming_normal_(self.dense.weight)
+        
+        # 添加层归一化，但默认使用Identity
+        self.layer_norm = nn.Identity()
 
     def encode_decode_step(self, inputs, decoder_input, decoder_state, selected_indices=None):
         """共用的编码-解码-注意力计算步骤"""
@@ -107,19 +113,18 @@ class PolicyNetwork(nn.Module):
         attention_output = self.attention(decoder_output, encoder_output)  # [batch_size, 1, hidden_dim]
         attention_output = attention_output.squeeze(1)  # [batch_size, hidden_dim]
         
+        # 应用层归一化
+        attention_output = self.layer_norm(attention_output)
+        
         # 生成logits
         logits = self.dense(attention_output)  # [batch_size, seq_len]
 
         # 处理mask - 将已选择的位置标记为负无穷
         if selected_indices is not None and len(selected_indices) > 0:
-            # 确保mask和logits具有相同的数据类型
-            mask = torch.zeros_like(logits, device=logits.device, dtype=logits.dtype)  # [batch_size, seq_len]
+            mask = torch.zeros_like(logits, device=logits.device, dtype=logits.dtype)
             for idx in selected_indices:
-                # 确保idx_squeezed是2D的 [batch_size, 1]
-                idx_squeezed = idx.squeeze(1).unsqueeze(1)  # [batch_size, 1]
-                # 创建与mask相同数据类型的填充值
+                idx_squeezed = idx.squeeze(1).unsqueeze(1)
                 ones = torch.ones_like(idx_squeezed, device=mask.device, dtype=mask.dtype)
-                # 使用正确的维度进行scatter
                 mask = mask.scatter_(1, idx_squeezed, ones)
             # 将已选择的位置标记为负无穷
             logits = torch.where(mask == 0, logits, torch.tensor(float('-inf'), device=logits.device, dtype=logits.dtype))
@@ -195,6 +200,21 @@ class PolicyNetwork(nn.Module):
         """推理模式"""
         selected_indices, rotation_decisions, _, _ = self.forward(inputs)
         return selected_indices, rotation_decisions
+
+    def load_state_dict(self, state_dict, strict=True):
+        """重写load_state_dict方法以处理旧版本模型"""
+        # 检查是否是旧版本的模型
+        if 'layer_norm.weight' not in state_dict:
+            logger.info("检测到旧版本模型，使用Identity层归一化")
+            # 保持使用Identity层
+            pass
+        else:
+            logger.info("检测到新版本模型，使用LayerNorm层归一化")
+            # 替换为LayerNorm层
+            self.layer_norm = nn.LayerNorm(self.hidden_dim)
+        
+        # 调用父类的load_state_dict方法
+        super().load_state_dict(state_dict, strict=False)
 
 
 class BinPackingDataset(Dataset):
@@ -326,6 +346,9 @@ def collate_fn(batch):
 def train(model, train_loader, optimizer, device, epochs=10):
     """训练模型 - 修改为批量处理"""
     model.train()
+    
+    # 添加梯度裁剪的最大范数
+    max_grad_norm = 1.0
 
     for epoch in range(epochs):
         total_placement_loss = 0
@@ -357,9 +380,7 @@ def train(model, train_loader, optimizer, device, epochs=10):
 
             # 修正：在每个位置独立计算损失
             placement_loss = 0
-            placement_count = 0
             rotation_loss = 0
-            rotation_count = 0
 
             # 按批次单独处理每个样本
             for i in range(batch_size):
@@ -370,38 +391,55 @@ def train(model, train_loader, optimizer, device, epochs=10):
                 if valid_len > 0:
                     # 计算放置顺序损失
                     for j in range(valid_len):
-                        sample_loss = F.cross_entropy(
-                            placement_logits[i, j].unsqueeze(0),  # [1, seq_len]
-                            placement_targets[i, j].unsqueeze(0)  # [1]
-                        )
-                        placement_loss += sample_loss
-                        placement_count += 1
+                        if mask[i, j]:  # 使用mask确保只计算有效位置
+                            # 使用 log_softmax 和 nll_loss 替代 cross_entropy
+                            logits = placement_logits[i, j].unsqueeze(0)
+                            target = placement_targets[i, j].unsqueeze(0)
+                            
+                            # 添加数值稳定性处理
+                            log_probs = F.log_softmax(logits, dim=-1)
+                            sample_loss = F.nll_loss(log_probs, target)
+                            
+                            # 检查损失是否为有效值
+                            if torch.isfinite(sample_loss):
+                                placement_loss += sample_loss
 
                     # 计算旋转角度损失
                     for j in range(valid_len):
-                        sample_loss = F.cross_entropy(
-                            rotation_logits[i, j].unsqueeze(0),  # [1, 4]
-                            rotation_targets[i, j].unsqueeze(0)  # [1]
-                        )
-                        rotation_loss += sample_loss
-                        rotation_count += 1
+                        if mask[i, j]:  # 使用mask确保只计算有效位置
+                            # 使用 log_softmax 和 nll_loss 替代 cross_entropy
+                            logits = rotation_logits[i, j].unsqueeze(0)
+                            target = rotation_targets[i, j].unsqueeze(0)
+                            
+                            # 添加数值稳定性处理
+                            log_probs = F.log_softmax(logits, dim=-1)
+                            sample_loss = F.nll_loss(log_probs, target)
+                            
+                            # 检查损失是否为有效值
+                            if torch.isfinite(sample_loss):
+                                rotation_loss += sample_loss
 
             # 计算平均损失
-            if placement_count > 0:
-                placement_loss = placement_loss / placement_count
-            
-            if rotation_count > 0:
-                rotation_loss = rotation_loss / rotation_count
+            valid_count = mask.sum().item()
+            if valid_count > 0:
+                placement_loss = placement_loss / valid_count
+                rotation_loss = rotation_loss / valid_count
+            else:
+                placement_loss = torch.tensor(0.0, device=device)
+                rotation_loss = torch.tensor(0.0, device=device)
 
             # 总损失
             total_loss = placement_loss + rotation_loss
 
             # 反向传播和优化
             total_loss.backward()
+            
+            # 添加梯度裁剪
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            
             optimizer.step()
 
             # 更新统计信息
-            valid_count = mask.sum().item()
             total_placement_loss += placement_loss.item() * valid_count
             total_rotation_loss += rotation_loss.item() * valid_count
             total_samples += valid_count
@@ -439,7 +477,7 @@ def train(model, train_loader, optimizer, device, epochs=10):
     return model
 
 
-def evaluate(model, val_loader, device):
+def evaluate(model, val_loader, device, use_wandb=False):
     """评估模型 - 修改为批量处理"""
     model.eval()
     total_placement_loss = 0
@@ -467,9 +505,7 @@ def evaluate(model, val_loader, device):
 
             # 使用与train函数相同的逻辑计算损失
             placement_loss = 0
-            placement_count = 0
             rotation_loss = 0
-            rotation_count = 0
 
             # 按批次单独处理每个样本和位置
             for i in range(batch_size):
@@ -478,31 +514,44 @@ def evaluate(model, val_loader, device):
                 if valid_len > 0:
                     # 计算放置顺序损失
                     for j in range(valid_len):
-                        sample_loss = F.cross_entropy(
-                            placement_logits[i, j].unsqueeze(0),
-                            placement_targets[i, j].unsqueeze(0)
-                        )
-                        placement_loss += sample_loss
-                        placement_count += 1
+                        if mask[i, j]:  # 使用mask确保只计算有效位置
+                            # 使用 log_softmax 和 nll_loss 替代 cross_entropy
+                            logits = placement_logits[i, j].unsqueeze(0)
+                            target = placement_targets[i, j].unsqueeze(0)
+                            
+                            # 添加数值稳定性处理
+                            log_probs = F.log_softmax(logits, dim=-1)
+                            sample_loss = F.nll_loss(log_probs, target)
+                            
+                            # 检查损失是否为有效值
+                            if torch.isfinite(sample_loss):
+                                placement_loss += sample_loss
 
                     # 计算旋转角度损失
                     for j in range(valid_len):
-                        sample_loss = F.cross_entropy(
-                            rotation_logits[i, j].unsqueeze(0),
-                            rotation_targets[i, j].unsqueeze(0)
-                        )
-                        rotation_loss += sample_loss
-                        rotation_count += 1
+                        if mask[i, j]:  # 使用mask确保只计算有效位置
+                            # 使用 log_softmax 和 nll_loss 替代 cross_entropy
+                            logits = rotation_logits[i, j].unsqueeze(0)
+                            target = rotation_targets[i, j].unsqueeze(0)
+                            
+                            # 添加数值稳定性处理
+                            log_probs = F.log_softmax(logits, dim=-1)
+                            sample_loss = F.nll_loss(log_probs, target)
+                            
+                            # 检查损失是否为有效值
+                            if torch.isfinite(sample_loss):
+                                rotation_loss += sample_loss
 
             # 计算平均损失
-            if placement_count > 0:
-                placement_loss = placement_loss / placement_count
-            
-            if rotation_count > 0:
-                rotation_loss = rotation_loss / rotation_count
+            valid_count = mask.sum().item()
+            if valid_count > 0:
+                placement_loss = placement_loss / valid_count
+                rotation_loss = rotation_loss / valid_count
+            else:
+                placement_loss = torch.tensor(0.0, device=device)
+                rotation_loss = torch.tensor(0.0, device=device)
 
             # 更新损失统计
-            valid_count = mask.sum().item()
             total_placement_loss += placement_loss.item() * valid_count
             total_rotation_loss += rotation_loss.item() * valid_count
 
@@ -510,22 +559,24 @@ def evaluate(model, val_loader, device):
             for i in range(batch_size):
                 valid_len = valid_lengths[i].item()
                 for j in range(valid_len):
-                    pred_placement = torch.argmax(placement_logits[i, j])
-                    if pred_placement == placement_targets[i, j]:
-                        correct_placements += 1
+                    if mask[i, j]:  # 只计算有效位置的准确率
+                        pred_placement = torch.argmax(placement_logits[i, j])
+                        if pred_placement == placement_targets[i, j]:
+                            correct_placements += 1
+                        
+                        pred_rotation = torch.argmax(rotation_logits[i, j])
+                        if pred_rotation == rotation_targets[i, j]:
+                            correct_rotations += 1
                     
-                    pred_rotation = torch.argmax(rotation_logits[i, j])
-                    if pred_rotation == rotation_targets[i, j]:
-                        correct_rotations += 1
-                
-                total_placements += valid_len
+                    total_placements += 1
 
             # 记录批次级别的评估指标到 wandb
-            wandb.log({
-                'val_batch_placement_loss': placement_loss.item(),
-                'val_batch_rotation_loss': rotation_loss.item(),
-                'val_batch': batch_idx
-            })
+            if use_wandb:
+                wandb.log({
+                    'val_batch_placement_loss': placement_loss.item(),
+                    'val_batch_rotation_loss': rotation_loss.item(),
+                    'val_batch': batch_idx
+                })
 
     # 计算平均指标
     avg_placement_loss = total_placement_loss / total_placements if total_placements > 0 else 0
@@ -534,12 +585,13 @@ def evaluate(model, val_loader, device):
     rotation_accuracy = correct_rotations / total_placements if total_placements > 0 else 0
 
     # 记录最终的评估指标到 wandb
-    wandb.log({
-        'val_placement_loss': avg_placement_loss,
-        'val_rotation_loss': avg_rotation_loss,
-        'val_placement_accuracy': placement_accuracy,
-        'val_rotation_accuracy': rotation_accuracy
-    })
+    if use_wandb:
+        wandb.log({
+            'val_placement_loss': avg_placement_loss,
+            'val_rotation_loss': avg_rotation_loss,
+            'val_placement_accuracy': placement_accuracy,
+            'val_rotation_accuracy': rotation_accuracy
+        })
 
     logger.info(f"Evaluation: "
                 f"Placement Loss: {avg_placement_loss:.4f}, "
@@ -555,40 +607,111 @@ def evaluate(model, val_loader, device):
     }
 
 
-def predict(model, test_data, device):
-    """使用模型进行预测"""
+def predict(model_path, data_file, device):
+    """加载已有模型并进行预测评估"""
+    # 设置设备
+    device = torch.device(device if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
+
+    # 加载数据
+    if not os.path.exists(data_file):
+        logger.error(f"Data file not found: {data_file}")
+        return
+
+    # 创建数据集
+    full_dataset = BinPackingDataset(data_file)
+    logger.info(f"Loaded {len(full_dataset)} data samples from {data_file}")
+
+    # 分割训练集和测试集
+    train_size = int(0.8 * len(full_dataset))
+    test_size = len(full_dataset) - train_size
+    _, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42)
+    )
+    logger.info(f"Using {len(test_dataset)} samples for testing")
+
+    # 创建数据加载器
+    data_loader = DataLoader(
+        test_dataset,
+        batch_size=32,
+        shuffle=False,
+        collate_fn=collate_fn,
+        drop_last=False
+    )
+
+    # 创建模型
+    input_dim = 2  # width, height
+    hidden_dim = 128
+    max_seq_len = max(len(item['parts']) for i in range(len(test_dataset)) for item in [test_dataset[i]])
+    
+    model = PolicyNetwork(input_dim, hidden_dim, max_seq_len).to(device)
+    
+    # 加载模型权重
+    if os.path.exists(model_path):
+        # 加载模型状态
+        state_dict = torch.load(model_path, map_location=device)
+        
+        # 检查是否是旧版本的模型
+        if 'layer_norm.weight' not in state_dict:
+            logger.info("检测到旧版本模型，正在适配...")
+            # 移除新版本模型中的layer_norm
+            model.layer_norm = nn.Identity()
+        
+        # 加载模型权重
+        model.load_state_dict(state_dict, strict=False)
+        logger.info(f"Loaded model from {model_path}")
+    else:
+        logger.error(f"Model file not found: {model_path}")
+        return
+    metrics=None
+
+    # # 评估模型
+    # logger.info("Evaluating model...")
+    # metrics = evaluate(model, data_loader, device, use_wandb=False)  # 在预测模式下不使用wandb
+    #
+    # 保存评估结果
+    results_dir = 'results'
+    os.makedirs(results_dir, exist_ok=True)
+    #
+    # 生成时间戳
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # results_file = os.path.join(results_dir, f'evaluation_results_{timestamp}.json')
+    #
+    # with open(results_file, 'w') as f:
+    #     json.dump(metrics, f, indent=2)
+    # logger.info(f"Evaluation results saved to {results_file}")
+
+    # 进行预测并保存结果
+    predictions = []
     model.eval()
-    results = []
-
     with torch.no_grad():
-        for item in tqdm(test_data, desc="Predicting"):
-            # 准备输入数据
-            parts = torch.tensor(item['parts'], dtype=torch.float32).unsqueeze(0).to(device)
-
-            # 预测放置顺序和旋转角度
+        for batch in tqdm(data_loader, desc="Making predictions"):
+            parts = batch['parts'].to(device)
             selected_indices, rotation_decisions = model.predict(parts)
+            
+            # 转换为CPU并转为numpy数组
+            selected_indices = selected_indices.cpu().numpy()
+            rotation_decisions = rotation_decisions.cpu().numpy()
+            
+            # 处理每个样本
+            for i in range(len(parts)):
+                valid_len = batch['valid_lengths'][i].item()
+                predictions.append({
+                    'bin': batch['bins'][i].cpu().numpy().tolist(),
+                    'parts': batch['parts'][i][:valid_len].cpu().numpy().tolist(),
+                    'predicted_placement': selected_indices[i][:valid_len].tolist(),
+                    'predicted_rotation': (rotation_decisions[i][:valid_len] * 90).tolist()  # 转换为角度
+                })
 
-            # 转换为Python列表
-            placement_order = selected_indices[0].cpu().numpy().tolist()
-            rotation_classes = rotation_decisions[0].cpu().numpy().tolist()
+    # 保存预测结果
+    predictions_file = os.path.join(results_dir, f'predictions_{timestamp}.jsonl')
+    with open(predictions_file, 'w') as f:
+        for prediction in predictions:
+            json.dump(prediction, f)
+        # json.dump(predictions, f, indent=2)
+    logger.info(f"Predictions saved to {predictions_file}")
 
-            # 将旋转类别转换为角度
-            rotation_degrees = [int(cls * 90) % 360 for cls in rotation_classes]
-
-            # 提取有效的预测（非零部分）
-            valid_length = len(item['parts'])
-            valid_placement = placement_order[:valid_length]
-            valid_rotation = rotation_degrees[:valid_length]
-
-            # 添加结果
-            results.append({
-                'bin': item['bin'],
-                'parts': item['parts'],
-                'predicted_placement': valid_placement,
-                'predicted_rotation': valid_rotation
-            })
-
-    return results
+    return metrics, predictions
 
 
 def main():
@@ -683,4 +806,19 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Train or predict with the bin packing model')
+    parser.add_argument('--mode', type=str, choices=['train', 'predict'], default='predict',
+                      help='Mode to run the script in: train or predict')
+    parser.add_argument('--model_path', type=str, default='models/bin_packing_model.pth',
+                      help='Path to the model file (for predict mode)')
+    parser.add_argument('--data_file', type=str, default='../output/placement-0412.jsonl',
+                      help='Path to the data file')
+    parser.add_argument('--device', type=str, default='cuda',
+                      help='Device to use (cuda or cpu)')
+
+    args = parser.parse_args()
+
+    if args.mode == 'train':
+        main()
+    else:
+        predict(args.model_path, args.data_file, args.device)
