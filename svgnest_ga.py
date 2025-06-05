@@ -5,10 +5,10 @@ import time
 import json
 from typing import List, Dict, Any, Optional, Callable, Union
 import pyclipper
-from geometry_util import GeometryUtil
-from svg_parser import SvgParser
-from genetic_algorithm import GeneticAlgorithm
-from placement_worker import PlacementWorker
+from utils.geometry_util import GeometryUtil
+from utils.svg_parser import SvgParser
+from utils.genetic_algorithm import GeneticAlgorithm
+from utils.placement_worker import PlacementWorker
 from lxml import etree
 from copy import deepcopy
 import sys

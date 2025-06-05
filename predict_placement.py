@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 # 导入svgnest相关模块
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from geometry_util import GeometryUtil
-from placement_worker import PlacementWorker
+from utils.placement_worker import PlacementWorker
 
 # 设置日志
 logging.basicConfig(
