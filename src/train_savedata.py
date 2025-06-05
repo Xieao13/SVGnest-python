@@ -708,6 +708,7 @@ def predict(model_path, data_file, device):
     with open(predictions_file, 'w') as f:
         for prediction in predictions:
             json.dump(prediction, f)
+            f.write('\n')
         # json.dump(predictions, f, indent=2)
     logger.info(f"Predictions saved to {predictions_file}")
 
