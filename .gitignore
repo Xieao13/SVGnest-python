@@ -149,7 +149,6 @@ Thumbs.db
 # Project specific
 output/
 wandb/
-data/
 python3.9.13/
 
 # Model checkpoints and training artifacts
@@ -160,5 +159,4 @@ python3.9.13/
 *.onnx
 
 # Logs
-logs/
 *.log 
