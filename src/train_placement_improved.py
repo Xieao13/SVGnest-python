@@ -18,11 +18,7 @@ from loss.placement_only_loss import calculate_placement_loss
 import argparse
 
 # 设置日志
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,12 +48,28 @@ def train(model, train_loader, val_loader, optimizer, device, args, epochs=20):
             optimizer.zero_grad()
             
             # 前向传播
-            placement_logits = model(parts, bins, placement_targets, teacher_forcing_ratio)
-            
-            # 计算损失 - 使用提取的函数
-            batch_loss, batch_accuracy = calculate_placement_loss(
-                placement_logits, placement_targets, valid_lengths
+            placement_logits = model(
+                parts=parts, 
+                bin_info=bins,
+                target_sequence=placement_targets,
+                valid_lengths=valid_lengths
             )
+            
+            # 计算损失
+            batch_loss, batch_accuracy = calculate_placement_loss(
+                placement_logits, 
+                placement_targets, 
+                valid_lengths
+            )
+
+            if not torch.isfinite(batch_loss):
+                logger.info(f"batch_loss is infinite, skip this batch")
+                # print(placement_logits.tolist())
+                # print(placement_targets.tolist())
+                # print(valid_lengths.tolist())
+                # print(batch_loss.item())
+                # print(batch_accuracy)
+                break
             
             if torch.isfinite(batch_loss) and batch_loss.item() < 100:
                 batch_loss.backward()
@@ -136,15 +148,22 @@ def evaluate(model, val_loader, device):
             placement_targets = batch['placement_orders'].to(device)
             valid_lengths = batch['valid_lengths'].to(device)
             
-            placement_logits = model(parts, bins, placement_targets)
-            
-            # 使用提取的损失函数
-            batch_loss, batch_accuracy = calculate_placement_loss(
-                placement_logits, placement_targets, valid_lengths
+            placement_logits = model(
+                parts=parts, 
+                bin_info=bins,
+                target_sequence=placement_targets,
+                valid_lengths=valid_lengths
             )
             
-            total_loss += batch_loss.item()
-            total_accuracy += batch_accuracy
+            # 使用提取的损失函数
+            loss, accuracy = calculate_placement_loss(
+                placement_logits, 
+                placement_targets, 
+                valid_lengths
+            )
+            
+            total_loss += loss.item()
+            total_accuracy += accuracy
             total_samples += 1
     
     avg_loss = total_loss / total_samples if total_samples > 0 else float('inf')
@@ -161,20 +180,20 @@ def main():
     # 使用argparse解析命令行参数
     parser = argparse.ArgumentParser(description="Train the improved placement model")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate for the optimizer")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for data loaders")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size for data loaders")
     parser.add_argument("--hidden_dim", type=int, default=256, help="Hidden dimension for the model")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--max_seq_len", type=int, default=60, help="Maximum sequence length for the model")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for the optimizer")
     
-    parser.add_argument("--train_data_file", type=str, default="../data/placement-0529-ga-20epoch-norotation/train.jsonl", help="Path to the training data file")
-    parser.add_argument("--test_data_file", type=str, default="../data/placement-0529-ga-20epoch-norotation/test.jsonl", help="Path to the test/validation data file")
-    parser.add_argument("--best_model_dir", type=str, default="../output/models", help="Directory to save the best model")
-    parser.add_argument("--final_model_dir", type=str, default="../output/models", help="Directory to save the final model")
+    parser.add_argument("--train_data_file", type=str, default="./data/placement-0529-ga-20epoch-norotation/train.jsonl", help="Path to the training data file")
+    parser.add_argument("--test_data_file", type=str, default="./data/placement-0529-ga-20epoch-norotation/test.jsonl", help="Path to the test/validation data file")
+    parser.add_argument("--best_model_dir", type=str, default="./output/models", help="Directory to save the best model")
+    parser.add_argument("--final_model_dir", type=str, default="./output/models", help="Directory to save the final model")
     
     parser.add_argument("--wandb_project", type=str, default="bin-packing-placement-improved", help="WandB project name")
     parser.add_argument("--wandb_name_prefix", type=str, default="improved-placement", help="Prefix for WandB run name")
-    parser.add_argument("--wandb_mode", type=str, default="online", choices=["online", "offline", "disabled"], help="WandB mode")
+    parser.add_argument("--wandb_mode", type=str, default="disabled", choices=["online", "offline", "disabled"], help="WandB mode")
     
     args = parser.parse_args()
 

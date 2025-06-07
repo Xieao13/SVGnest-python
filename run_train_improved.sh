@@ -15,6 +15,7 @@ TRAIN_DATA_FILE="./data/placement-0529-ga-20epoch-norotation/train.jsonl"
 TEST_DATA_FILE="./data/placement-0529-ga-20epoch-norotation/test.jsonl"
 BEST_MODEL_DIR="./output/models"
 FINAL_MODEL_DIR="./output/models"
+mkdir -p $FINAL_MODEL_DIR
 
 # WandB Parameters
 WANDB_PROJECT="bin-packing-placement-improved"

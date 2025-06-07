@@ -5,15 +5,23 @@
 
 import torch
 import torch.nn.functional as F
+import logging
+import sys
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 def calculate_placement_loss(placement_logits, placement_targets, valid_lengths):
     """
     计算放置顺序的损失和准确率
     
     Args:
-        placement_logits: [batch_size, seq_len, max_parts]
-        placement_targets: [batch_size, seq_len] 
+        placement_logits: [batch_size, seq_len_padded, seq_len_padded]
+        placement_targets: [batch_size, seq_len_padded] 
         valid_lengths: [batch_size]
     
     Returns:
@@ -30,6 +38,7 @@ def calculate_placement_loss(placement_logits, placement_targets, valid_lengths)
         for step in range(valid_len):
             target = placement_targets[i, step]
             logits = placement_logits[i, step]
+           
             
             # 创建mask - 之前选择的零件不能再选
             mask = torch.zeros_like(logits, dtype=torch.bool)
@@ -45,6 +54,14 @@ def calculate_placement_loss(placement_logits, placement_targets, valid_lengths)
             if target < valid_len:
                 loss = F.cross_entropy(masked_logits[:valid_len].unsqueeze(0), target.unsqueeze(0))
                 total_loss += loss
+                if not torch.isfinite(loss):
+                    logger.debug(f"loss: {loss}")
+                    logger.debug(f"masked_logits: {masked_logits}")
+                    logger.debug(f"target: {target}, logits: {logits}")
+                    logger.debug(f"prev_selections: {prev_selections}")
+                    logger.debug(f"placement_targets: {placement_targets}")
+                    logger.debug(f"valid_len: {valid_len}")
+                    logger.debug(f"step: {step}")
                 
                 # 计算准确率
                 pred = torch.argmax(masked_logits[:valid_len])
@@ -60,3 +77,12 @@ def calculate_placement_loss(placement_logits, placement_targets, valid_lengths)
         accuracy = 0.0
     
     return avg_loss, accuracy
+
+if __name__ == "__main__":
+    
+    placement_logits = torch.randn(1, 10, 10)
+    # 不可以重复选择
+    placement_targets = torch.randint(0, 10, (1, 10))
+    valid_lengths = torch.tensor([10])
+    loss, accuracy = calculate_placement_loss(placement_logits, placement_targets, valid_lengths)
+    print(loss, accuracy)

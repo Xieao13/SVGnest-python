@@ -5,11 +5,7 @@ import json
 import logging
 import sys
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+
 logger = logging.getLogger(__name__)
 
 class PlacementOnlyDataset(Dataset):
@@ -49,7 +45,7 @@ class PlacementOnlyDataset(Dataset):
 
 def PlacementOnly_collate_fn(batch):
     """放置顺序的批次处理函数"""
-    max_len = max(len(item['parts']) for item in batch)
+    max_len = max(item['valid_length'] for item in batch)
     
     bins = []
     padded_parts = []
@@ -58,25 +54,21 @@ def PlacementOnly_collate_fn(batch):
     valid_lengths = []
 
     for item in batch:
+        if len(item['placement_order']) != item['valid_length']:
+            logger.debug(f"data with invalid: placement_order: {item['placement_order']}, valid_length: {item['valid_length']}")
+            continue
         bins.append(item['bin'])
         
         parts = item['parts']
-        current_len = len(parts)
+        current_len = item['valid_length']
+
         padding_len = max_len - current_len
         padded = torch.cat([parts, torch.zeros((padding_len, 2), dtype=torch.float32)], dim=0)
         padded_parts.append(padded)
         
         placement_order = item['placement_order']
-        if len(placement_order) != current_len:
-            if len(placement_order) > current_len:
-                placement_order = placement_order[:current_len]
-            else:
-                placement_order = torch.cat([
-                    placement_order, 
-                    torch.zeros(current_len - len(placement_order), dtype=torch.long)
-                ])
         
-        padded_order = torch.cat([placement_order, torch.zeros(padding_len, dtype=torch.long)])
+        padded_order = torch.cat([placement_order, torch.full((padding_len,), -1, dtype=torch.long)])
         padded_placement_orders.append(padded_order)
         
         efficiencies.append(item['efficiency'])
@@ -91,6 +83,8 @@ def PlacementOnly_collate_fn(batch):
     }
 
 if __name__ == "__main__":
-    dataset = PlacementOnlyDataset('../output/placement_0529.jsonl')
-    print(len(dataset))
-    print(dataset[0])
+    dataset = PlacementOnlyDataset('./data/placement-0529-ga-20epoch-norotation/train.jsonl')
+    # print(len(dataset))
+    # print(dataset[0])
+    batch = PlacementOnly_collate_fn([dataset[0], dataset[1]])
+    print(batch)
