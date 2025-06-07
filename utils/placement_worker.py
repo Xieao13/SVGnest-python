@@ -3,8 +3,10 @@
 import math
 from typing import List, Dict, Any, Optional, Union, Tuple
 import pyclipper
-from geometry_util import GeometryUtil
+from utils.geometry_util import GeometryUtil
+import logging
 
+logger = logging.getLogger(__name__)
 
 def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
     """将普通坐标转换为Clipper坐标(元组格式)
@@ -18,7 +20,7 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
     try:
         result = []
         if not polygon:
-            print("警告: 输入多边形为空")
+            logger.debug("警告: 输入多边形为空")
             return []
 
         # 定义缩放因子
@@ -38,22 +40,22 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                     x = float(getattr(point, 'x'))
                     y = float(getattr(point, 'y'))
                 else:
-                    print(f"警告: 无效的点格式: {point}")
+                    logger.debug(f"警告: 无效的点格式: {point}")
                     return []
 
                 if math.isnan(x) or math.isnan(y) or math.isinf(x) or math.isinf(y):
-                    print(f"警告: 坐标不是有效数字: x={x}, y={y}")
+                    logger.debug(f"警告: 坐标不是有效数字: x={x}, y={y}")
                     return []
 
                 if abs(x) > 1e6 or abs(y) > 1e6:
-                    print(f"警告: 原始坐标值过大: x={x}, y={y}")
+                    logger.debug(f"警告: 原始坐标值过大: x={x}, y={y}")
                     return []
 
                 x = int(round(x * SCALE))
                 y = int(round(y * SCALE))
                 return [(x, y)]
             except (ValueError, TypeError) as e:
-                print(f"警告: 单点坐标转换失败: {e}")
+                logger.debug(f"警告: 单点坐标转换失败: {e}")
                 return []
 
         # 检查输入多边形是否闭合
@@ -63,7 +65,7 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
             if isinstance(first_point, dict) and isinstance(last_point, dict):
                 if not (GeometryUtil.almost_equal(first_point.get('x', 0), last_point.get('x', 0)) and
                         GeometryUtil.almost_equal(first_point.get('y', 0), last_point.get('y', 0))):
-                    print("警告: 输入多边形未闭合，将自动闭合")
+                    logger.debug("警告: 输入多边形未闭合，将自动闭合")
                     polygon = polygon + [polygon[0]]
 
         for point in polygon:
@@ -75,7 +77,7 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                         x = float(point['x'])
                         y = float(point['y'])
                     except (ValueError, TypeError):
-                        print(f"警告: 坐标值无法转换为浮点数: {point}")
+                        logger.debug(f"警告: 坐标值无法转换为浮点数: {point}")
                         continue
                 # 检查是否有X,Y键（大写）
                 elif 'X' in point and 'Y' in point:
@@ -83,10 +85,10 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                         x = float(point['X'])
                         y = float(point['Y'])
                     except (ValueError, TypeError):
-                        print(f"警告: 坐标值无法转换为浮点数: {point}")
+                        logger.debug(f"警告: 坐标值无法转换为浮点数: {point}")
                         continue
                 else:
-                    print(f"警告: 点缺少x或y坐标: {point}")
+                    logger.debug(f"警告: 点缺少x或y坐标: {point}")
                     continue
             # 处理列表或元组格式的点
             elif isinstance(point, (list, tuple)) and len(point) >= 2:
@@ -94,7 +96,7 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                     x = float(point[0])
                     y = float(point[1])
                 except (ValueError, TypeError):
-                    print(f"警告: 坐标值无法转换为浮点数: {point}")
+                    logger.debug(f"警告: 坐标值无法转换为浮点数: {point}")
                     continue
             # 处理自定义对象格式的点
             elif hasattr(point, 'x') and hasattr(point, 'y'):
@@ -102,20 +104,20 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                     x = float(getattr(point, 'x'))
                     y = float(getattr(point, 'y'))
                 except (ValueError, TypeError):
-                    print(f"警告: 坐标值无法转换为浮点数: {point}")
+                    logger.debug(f"警告: 坐标值无法转换为浮点数: {point}")
                     continue
             else:
-                print(f"警告: 无效的点格式: {point}")
+                logger.debug(f"警告: 无效的点格式: {point}")
                 continue
 
             # 检查坐标是否为有效数字
             if math.isnan(x) or math.isnan(y) or math.isinf(x) or math.isinf(y):
-                print(f"警告: 坐标不是有效数字: x={x}, y={y}")
+                logger.debug(f"警告: 坐标不是有效数字: x={x}, y={y}")
                 continue
 
             # 检查原始坐标是否在合理范围内
             if abs(x) > 1e6 or abs(y) > 1e6:
-                print(f"警告: 原始坐标值过大: x={x}, y={y}")
+                logger.debug(f"警告: 原始坐标值过大: x={x}, y={y}")
                 continue
 
             # 转换到Clipper坐标（放大并取整）
@@ -124,12 +126,12 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
                 y = int(round(y * SCALE))
                 result.append((x, y))
             except (ValueError, TypeError, OverflowError) as e:
-                print(f"警告: 坐标转换失败: {e}")
+                logger.debug(f"警告: 坐标转换失败: {e}")
                 continue
 
         # 验证结果
         if len(result) < 3 and len(polygon) >= 3:
-            print(f"警告: 转换后的点数不足: {len(result)}")
+            logger.debug(f"警告: 转换后的点数不足: {len(result)}")
             return []
 
         # 确保多边形闭合
@@ -142,15 +144,15 @@ def to_clipper_coordinates(polygon: List[Dict]) -> List[tuple]:
             try:
                 area = abs(pyclipper.Area(result))
                 if area < SCALE * 0.1:  # 降低面积阈值
-                    print(f"警告: 转换后的多边形面积过小: {area}")
+                    logger.debug(f"警告: 转换后的多边形面积过小: {area}")
                     return []
             except Exception as e:
-                print(f"警告: 计算多边形面积时出错: {e}")
+                logger.debug(f"警告: 计算多边形面积时出错: {e}")
                 return []
 
         return result
     except Exception as e:
-        print(f"转换到Clipper坐标时出错: {e}")
+        logger.debug(f"转换到Clipper坐标时出错: {e}")
         return []
 
 
@@ -184,10 +186,10 @@ def to_nest_coordinates(polygon: List[tuple], scale: float) -> List[Dict]:
                         'y': float(point['y']) / scale
                     })
             else:
-                print(f"警告: 无效的点格式: {point}")
+                logger.debug(f"警告: 无效的点格式: {point}")
         return result
     except Exception as e:
-        print(f"转换回普通坐标时出错: {e}")
+        logger.debug(f"转换回普通坐标时出错: {e}")
         return []
 
 
@@ -294,12 +296,12 @@ class PlacementWorker:
         self.total_area = 0
         for i, path in enumerate(paths):
             if not self._is_valid_polygon(path):
-                print(f"路径 {i} 无效，跳过")
+                logger.debug(f"路径 {i} 无效，跳过")
                 continue
 
             area = abs(GeometryUtil.polygon_area(path))
             if area < 1e-6:
-                print(f"路径 {i} 面积过小，跳过")
+                logger.debug(f"路径 {i} 面积过小，跳过")
                 continue
 
             self.valid_paths.append(path)
@@ -308,7 +310,7 @@ class PlacementWorker:
         if not self.valid_paths:
             raise ValueError("没有有效的路径")
 
-        print(f"初始化完成: {len(self.valid_paths)} 个有效路径，总面积={self.total_area}")
+        logger.debug(f"初始化完成: {len(self.valid_paths)} 个有效路径，总面积={self.total_area}")
 
     def _get_reference_point(self, polygon: List[Dict]) -> Dict:
         """获取多边形的参考点（最左下角点）
@@ -330,7 +332,7 @@ class PlacementWorker:
 
     def place_paths(self):
         """放置路径，使用NFP进行优化放置"""
-        print("place_paths: 开始放置路径...")
+        logger.debug("place_paths: 开始放置路径...")
 
         paths = self.paths
 
@@ -341,7 +343,7 @@ class PlacementWorker:
 
         # 1. 计算容器边界
         bin_bounds = GeometryUtil.get_polygon_bounds(self.bin_polygon)
-        print(f"place_paths: 容器边界: {bin_bounds}")
+        logger.debug(f"place_paths: 容器边界: {bin_bounds}")
 
         # 计算容器的左下角点（相对于原点）
         bin_min_x = bin_bounds['x']
@@ -373,7 +375,7 @@ class PlacementWorker:
                 bin_nfp = GeometryUtil.no_fit_polygon(self.bin_polygon, path, inside=True)
 
                 if not bin_nfp:
-                    print(f"place_paths: 路径 {i} 无法放入容器")
+                    logger.debug(f"place_paths: 路径 {i} 无法放入容器")
                     continue
 
                 # 如果是第一个放置的路径，放在容器左下角
@@ -394,7 +396,7 @@ class PlacementWorker:
                             dy + path_bounds['y'] < bin_min_y or
                             dx + path_bounds['x'] + path_bounds['width'] > bin_min_x + bin_bounds['width'] or
                             dy + path_bounds['y'] + path_bounds['height'] > bin_min_y + bin_bounds['height']):
-                        print(f"place_paths: 路径 {i} 无法放置在容器内")
+                        logger.debug(f"place_paths: 路径 {i} 无法放置在容器内")
                         continue
 
                     placements.append(position)
@@ -409,7 +411,7 @@ class PlacementWorker:
                     nfp = GeometryUtil.no_fit_polygon(placed_path, path, inside=False)
 
                     if not nfp:
-                        print(f"place_paths: 路径 {i} 与路径 {placed_id} 的NFP计算失败")
+                        logger.debug(f"place_paths: 路径 {i} 与路径 {placed_id} 的NFP计算失败")
                         continue
 
                     # 移动NFP到已放置零件的位置
@@ -512,7 +514,7 @@ class PlacementWorker:
 
 
 
-        print(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
+        logger.debug(f"place_paths: 完成，放置 {len(placed_paths)} 个路径，未放置 {len(unplaced)} 个路径")
         return placed_paths, unplaced, max_area
 
     def _move_path(self, path: List[Dict], position: Dict) -> List[Dict]:
@@ -544,7 +546,7 @@ class PlacementWorker:
         """
         try:
             if not polygon or len(polygon) < 3:
-                print("_is_valid_polygon: 多边形点数不足")
+                logger.debug("_is_valid_polygon: 多边形点数不足")
                 return False
 
             # 检查点格式和类型
@@ -553,57 +555,57 @@ class PlacementWorker:
                 # 处理元组格式
                 if isinstance(point, (list, tuple)):
                     if len(point) < 2:
-                        print("_is_valid_polygon: 点格式无效 - 元组长度不足")
+                        logger.debug("_is_valid_polygon: 点格式无效 - 元组长度不足")
                         return False
                     try:
                         x = float(point[0])
                         y = float(point[1])
                         valid_points.append({'x': x, 'y': y})
                     except (ValueError, TypeError):
-                        print("_is_valid_polygon: 点坐标转换失败")
+                        logger.debug("_is_valid_polygon: 点坐标转换失败")
                         return False
                 # 处理字典格式
                 elif isinstance(point, dict):
                     if 'x' not in point or 'y' not in point:
-                        print("_is_valid_polygon: 点格式无效 - 缺少x或y坐标")
+                        logger.debug("_is_valid_polygon: 点格式无效 - 缺少x或y坐标")
                         return False
                     try:
                         x = float(point['x'])
                         y = float(point['y'])
                         valid_points.append({'x': x, 'y': y})
                     except (ValueError, TypeError):
-                        print("_is_valid_polygon: 点坐标转换失败")
+                        logger.debug("_is_valid_polygon: 点坐标转换失败")
                         return False
                 else:
-                    print(f"_is_valid_polygon: 不支持的点格式: {type(point)}")
+                    logger.debug(f"_is_valid_polygon: 不支持的点格式: {type(point)}")
                     return False
 
                 # 检查坐标值是否有效
                 if math.isnan(x) or math.isinf(x) or math.isnan(y) or math.isinf(y):
-                    print("_is_valid_polygon: 坐标值无效")
+                    logger.debug("_is_valid_polygon: 坐标值无效")
                     return False
 
                 if abs(x) > 1e12 or abs(y) > 1e12:
-                    print("_is_valid_polygon: 坐标值过大")
+                    logger.debug("_is_valid_polygon: 坐标值过大")
                     return False
 
             # 检查是否有重复点
             for i in range(len(valid_points) - 1):
                 if GeometryUtil.almost_equal(valid_points[i]['x'], valid_points[i + 1]['x'], 0.1) and \
                         GeometryUtil.almost_equal(valid_points[i]['y'], valid_points[i + 1]['y'], 0.1):
-                    print("_is_valid_polygon: 发现重复点")
+                    logger.debug("_is_valid_polygon: 发现重复点")
                     return False
 
             # 计算面积
             area = abs(self._calculate_area(valid_points))
             if area < 1e-4:  # 增加面积阈值
-                print("_is_valid_polygon: 面积过小")
+                logger.debug("_is_valid_polygon: 面积过小")
                 return False
 
             return True
 
         except Exception as e:
-            print(f"_is_valid_polygon: 验证过程中发生错误: {e}")
+            logger.debug(f"_is_valid_polygon: 验证过程中发生错误: {e}")
             return False
 
     def _calculate_area(self, polygon: List[Dict]) -> float:
@@ -635,73 +637,73 @@ class PlacementWorker:
     #     Returns:
     #         NFP缓存字典
     #     """
-    #     print("calculate_nfp_cache: 开始计算...")
+    #     logger.debug("calculate_nfp_cache: 开始计算...")
     #
     #     # 验证容器多边形
     #     if not self._is_valid_polygon(bin_polygon):
-    #         print("calculate_nfp_cache: 容器多边形无效")
+    #         logger.debug("calculate_nfp_cache: 容器多边形无效")
     #         return {}
     #
     #     bin_area = abs(GeometryUtil.polygon_area(bin_polygon))
-    #     print(f"calculate_nfp_cache: 容器多边形有效，面积={bin_area}")
+    #     logger.debug(f"calculate_nfp_cache: 容器多边形有效，面积={bin_area}")
     #
     #     # 验证路径
     #     valid_paths = []
     #     total_area = 0
     #     for path in paths:
     #         if not self._is_valid_polygon(path):
-    #             print(f"calculate_nfp_cache: 路径 {len(valid_paths)} 无效，跳过")
+    #             logger.debug(f"calculate_nfp_cache: 路径 {len(valid_paths)} 无效，跳过")
     #             continue
     #
     #         area = abs(GeometryUtil.polygon_area(path))
     #         if area < 1e-6:
-    #             print(f"calculate_nfp_cache: 路径 {len(valid_paths)} 面积过小，跳过")
+    #             logger.debug(f"calculate_nfp_cache: 路径 {len(valid_paths)} 面积过小，跳过")
     #             continue
     #
-    #         print(f"calculate_nfp_cache: 路径 {len(valid_paths)} 有效，面积={area}")
+    #         logger.debug(f"calculate_nfp_cache: 路径 {len(valid_paths)} 有效，面积={area}")
     #         valid_paths.append(path)
     #         total_area += area
     #
-    #     print(f"calculate_nfp_cache: 有效路径数量={len(valid_paths)}，总面积={total_area}")
+    #     logger.debug(f"calculate_nfp_cache: 有效路径数量={len(valid_paths)}，总面积={total_area}")
     #
     #     # 初始化NFP缓存
     #     nfp_cache = {}
     #
     #     # 计算每个路径与容器的NFP
     #     for i, path in enumerate(valid_paths):
-    #         print(f"calculate_nfp_cache: 处理路径 {i}")
+    #         logger.debug(f"calculate_nfp_cache: 处理路径 {i}")
     #
     #         # 计算路径与容器的NFP
     #         nfp = GeometryUtil.no_fit_polygon(bin_polygon, path, inside=True)
     #         if nfp:
     #             key = f"bin,{i}"
     #             nfp_cache[key] = nfp
-    #             print(f"calculate_nfp_cache: 成功计算路径 {i} 与容器的NFP")
+    #             logger.debug(f"calculate_nfp_cache: 成功计算路径 {i} 与容器的NFP")
     #         else:
-    #             print(f"calculate_nfp_cache: 路径 {i} 与容器的NFP计算失败")
+    #             logger.debug(f"calculate_nfp_cache: 路径 {i} 与容器的NFP计算失败")
     #             continue
     #
     #         # 计算路径与其他路径的NFP
     #         for j in range(i + 1, len(valid_paths)):
-    #             print(f"calculate_nfp_cache: 计算路径 {i} 和 {j} 之间的NFP")
+    #             logger.debug(f"calculate_nfp_cache: 计算路径 {i} 和 {j} 之间的NFP")
     #
     #             # 尝试计算NFP
     #             nfp = GeometryUtil.no_fit_polygon(path, valid_paths[j])
     #             if nfp:
     #                 key = f"{i},{j}"
     #                 nfp_cache[key] = nfp
-    #                 print(f"calculate_nfp_cache: 成功计算路径 {i} 和 {j} 之间的NFP")
+    #                 logger.debug(f"calculate_nfp_cache: 成功计算路径 {i} 和 {j} 之间的NFP")
     #             else:
-    #                 print(f"calculate_nfp_cache: 路径 {i} 和 {j} 之间的NFP计算失败")
+    #                 logger.debug(f"calculate_nfp_cache: 路径 {i} 和 {j} 之间的NFP计算失败")
     #
     #                 # 尝试反向计算
     #                 nfp = GeometryUtil.no_fit_polygon(valid_paths[j], path)
     #                 if nfp:
     #                     key = f"{j},{i}"
     #                     nfp_cache[key] = nfp
-    #                     print(f"calculate_nfp_cache: 成功计算路径 {j} 和 {i} 之间的NFP（反向）")
+    #                     logger.debug(f"calculate_nfp_cache: 成功计算路径 {j} 和 {i} 之间的NFP（反向）")
     #                 else:
-    #                     print(f"calculate_nfp_cache: 路径 {j} 和 {i} 之间的NFP计算失败（反向）")
+    #                     logger.debug(f"calculate_nfp_cache: 路径 {j} 和 {i} 之间的NFP计算失败（反向）")
     #
-    #     print(f"calculate_nfp_cache: 完成，共计算 {len(nfp_cache)} 个NFP")
+    #     logger.debug(f"calculate_nfp_cache: 完成，共计算 {len(nfp_cache)} 个NFP")
     #     return nfp_cache
