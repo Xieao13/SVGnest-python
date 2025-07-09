@@ -432,10 +432,14 @@ class PlacementWorker:
                 # 排序，将final_nfp优先按y坐标从小到大排序,当y坐标相同时按x坐标从小到大排序
                 final_nfp.sort(key=lambda point: (point['y'], point['x']))
 
-                # 5. 在可行区域中寻找最佳位置
-                min_width = None
-                min_area = None
+                # # 5. 在可行区域中寻找最佳位置
+                # min_width = None
+                # min_area = None
+                # best_position = None
+                # 5. 在可行区域中寻找最佳位置（使用BL策略）
                 best_position = None
+                best_y = None
+                best_x = None
 
                 for k, point in enumerate(final_nfp):
                     # 计算放置后的所有点
@@ -473,14 +477,26 @@ class PlacementWorker:
                             bounds['y'] + bounds['height'] > bin_min_y + bin_bounds['height']):
                         continue
 
-                    # 计算面积（权重宽度更大，以帮助压缩重力方向）
-                    area = bounds['height']
+                    # # 计算面积（权重宽度更大，以帮助压缩重力方向）
+                    # area = bounds['height']
 
-                    if min_area is None or area < min_area or area == min_area and bounds['width'] < min_width:
-                        max_area = bounds['height']*bounds['width']
-                        min_width = bounds['width']
-                        min_area = area
+                    # if min_area is None or area < min_area or area == min_area and bounds['width'] < min_width:
+                    #     max_area = bounds['height']*bounds['width']
+                    #     min_width = bounds['width']
+                    #     min_area = area
+                    #     best_position = shift
+
+                    # BL策略：优先选择y坐标最小的位置，如果y相同则选择x坐标最小的位置
+                    current_y = point['y']
+                    current_x = point['x']
+                    
+                    if (best_position is None or 
+                        current_y < best_y or 
+                        (current_y == best_y and current_x < best_x)):
+                        best_y = current_y
+                        best_x = current_x
                         best_position = shift
+                        max_area = bounds['height'] * bounds['width']
 
                 if best_position:
                     placed.append(path)
