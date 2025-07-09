@@ -204,26 +204,8 @@ class DQNAgent:
         dones = dones.to(self.device)
         
         # 奖励归一化和裁剪
-        # 方法1: 裁剪奖励到合理范围
-        rewards = torch.clamp(rewards, min=-10.0, max=200.0)
-        
-        # 方法2: 可选的奖励归一化（移动平均）
-        if not hasattr(self, 'reward_mean'):
-            self.reward_mean = 0.0
-            self.reward_std = 1.0
-            self.reward_count = 0
-        
-        # 更新奖励统计（使用移动平均）
-        self.reward_count += len(rewards)
-        alpha = min(0.1, 1.0 / max(1, self.reward_count // 1000))  # 适应性学习率
-        batch_mean = rewards.mean().item()
-        batch_std = rewards.std().item() + 1e-8
-        
-        self.reward_mean = (1 - alpha) * self.reward_mean + alpha * batch_mean
-        self.reward_std = (1 - alpha) * self.reward_std + alpha * batch_std
-        
-        # 标准化奖励（可选，注释掉如果不需要）
-        # rewards = (rewards - self.reward_mean) / (self.reward_std + 1e-8)
+        # 裁剪奖励到合理范围 (匹配新的奖励scale)
+        rewards = torch.clamp(rewards, min=-10.0, max=200.0)  # 匹配新的奖励范围0-170
         
         # 当前Q值
         current_q_values = self.policy_net(states).gather(1, actions.unsqueeze(1))
@@ -235,8 +217,8 @@ class DQNAgent:
             next_q_values = self.target_net(next_states).gather(1, next_actions)
             target_q_values = rewards.unsqueeze(1) + (self.gamma * next_q_values * (~dones).unsqueeze(1))
             
-            # 目标值裁剪，防止Q值膨胀
-            target_q_values = torch.clamp(target_q_values, min=-50.0, max=500.0)
+            # 目标值裁剪，防止Q值膨胀 (匹配新的scale)
+            target_q_values = torch.clamp(target_q_values, min=-50.0, max=400.0)  # 而不是-10到50
         
         # 计算损失
         loss = F.huber_loss(current_q_values, target_q_values)
@@ -295,13 +277,5 @@ class DQNAgent:
             'avg_loss_last_100': np.mean(self.episode_losses[-100:]) if self.episode_losses else 0,
             'total_episodes': len(self.episode_rewards)
         }
-        
-        # 添加奖励统计信息
-        if hasattr(self, 'reward_mean'):
-            stats.update({
-                'reward_mean': self.reward_mean,
-                'reward_std': self.reward_std,
-                'reward_count': self.reward_count
-            })
         
         return stats 

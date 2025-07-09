@@ -11,8 +11,8 @@ MAX_STEPS_PER_EPISODE=100
 LEARNING_RATE=0.001
 GAMMA=0.99
 EPSILON_START=1.0
-EPSILON_END=0.01
-EPSILON_DECAY=5000
+EPSILON_END=0.2
+EPSILON_DECAY=100000
 TARGET_UPDATE_FREQ=1000
 BUFFER_SIZE=100000
 BATCH_SIZE=32
@@ -20,9 +20,9 @@ HIDDEN_DIM=512
 
 # Training Parameters
 NUM_EPISODES=50000
-EVAL_FREQ=500
+EVAL_FREQ=100
 EVAL_EPISODES=50
-SAVE_FREQ=2000
+SAVE_FREQ=1000
 EARLY_STOP_PATIENCE=2000
 
 # Data and Model Paths
@@ -66,8 +66,7 @@ python ./src/rl/train_rl.py \
     --model_save_dir $MODEL_SAVE_DIR \
     --wandb_project $WANDB_PROJECT \
     --wandb_name_prefix $WANDB_NAME_PREFIX \
-    --wandb_mode $WANDB_MODE
-    > $LOG_DIR/train_rl.log 2>&1
+    --wandb_mode $WANDB_MODE > $LOG_DIR/train_rl.log 2>&1
 
 echo "Training completed. Check $LOG_DIR/train_rl.log for details."
 echo "Models saved in: $MODEL_SAVE_DIR" 

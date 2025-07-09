@@ -181,41 +181,41 @@ class BinPackingEnvironment(gym.Env):
             else:
                 bbox_ratio = 1.0
                 
-            # 奖励设计
+            # 奖励设计 - 修复scale过小的问题  
             reward = 0.0
             
-            # 1. 基础效率奖励
-            reward += material_utilization * 10.0
+            # 1. 基础效率奖励 (增大scale到正常范围)
+            reward += material_utilization * 20.0  # 0-20 而不是0-1
             
-            # 2. 增量奖励：相比上一步的改进
+            # 2. 增量奖励：相比上一步的改进 (增大scale)
             if hasattr(self, 'prev_efficiency'):
                 improvement = material_utilization - self.prev_efficiency
                 if improvement > 0:
-                    reward += improvement * 5.0  # 放大改进奖励
+                    reward += improvement * 30.0  # 而不是2.0
             
             self.prev_efficiency = material_utilization
             
-            # 3. 完成奖励 - 分段阶梯式 + 线性奖励
+            # 3. 完成奖励 - 增大scale到合理范围
             if self.done:
-                # 分段阶梯式奖励（保持原有逻辑）
+                # 分段阶梯式奖励（增大到正常范围）
                 if material_utilization > 0.9:  # 高效率完成
-                    reward += 50.0
+                    reward += 100.0  # 而不是3.0
                 elif material_utilization > 0.8:  # 中等效率完成
-                    reward += 30.0
+                    reward += 60.0  # 而不是2.0
                 elif material_utilization > 0.7:  # 低效率完成
-                    reward += 10.0
+                    reward += 30.0  # 而不是1.0
                 else:  # 低效率完成
-                    reward += 1.0
+                    reward += 10.0  # 而不是0.1
                 
-                # 在分段奖励基础上，再增加线性奖励
-                linear_reward = material_utilization * 50.0  # 利用率线性奖励 (0-50)
+                # 线性奖励也增大
+                linear_reward = material_utilization * 50.0  # 而不是2.0
                 reward += linear_reward
             
             return reward
             
         except Exception as e:
             print(f"计算奖励时出错: {e}")
-            return -5.0  # 出错时给予负奖励
+            return -0.5  # 出错时给予小的负奖励
     
     def _calculate_current_efficiency(self) -> float:
         """计算当前材料利用率"""
