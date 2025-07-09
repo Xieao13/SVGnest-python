@@ -1,10 +1,7 @@
 #!/bin/bash
-
 # 时序差分策略学习训练脚本
-
 # 创建目录
 mkdir -p ./models ./logs
-
 # 运行训练
 python src/td_trainer.py \
     --train_file "./data/placement-0529-ga-20epoch-norotation/train.jsonl" \
