@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from dataset.dataset import PlacementOnlyDataset, PlacementOnly_collate_fn
-from model.placement_only_model import PlacementOnlyNetwork
+from src.dataset.dataset import PlacementOnlyDataset, PlacementOnly_collate_fn
+from src.model.placement_only_model import PlacementOnlyNetwork
 import os
 import json
 import logging
@@ -14,7 +14,7 @@ from tqdm import tqdm
 import random
 import wandb
 import datetime
-from loss.placement_only_loss import calculate_placement_loss
+from src.loss.placement_only_loss import calculate_placement_loss
 import argparse
 
 # 设置日志

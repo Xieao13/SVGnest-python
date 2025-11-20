@@ -962,8 +962,8 @@ def main(input_file: str, output_file: str):
 
 
 if __name__ == '__main__':
-    # svg_file = "input.svg"
-    jsonl_file = "src/results/predictions_20250508_150412.jsonl"
+    svg_file = "input.svg"
+    # jsonl_file = "src/results/predictions_20250508_150412.jsonl"
     output_file = "output/placement_mymodel_0515.jsonl"
     # main(jsonl_file, output_file)
-    main(jsonl_file, output_file)
+    main(svg_file, output_file)

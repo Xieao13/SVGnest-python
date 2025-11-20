@@ -10,8 +10,6 @@ import json
 # 添加项目根目录到Python路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
-from utils.geometry_util import GeometryUtil
-from utils.placement_worker import PlacementWorker
 from src.reward.td_reward_calculator import TDRewardCalculator
 
 
@@ -37,9 +35,17 @@ class TDEnvironment:
             w2=reward_weights[1], 
             w3=reward_weights[2]
         )
-        
-        # 环境状态
-        self.reset()
+
+        # 只初始化状态变量
+        self.bin_polygon = None
+        self.parts = []
+        self.parts_info = []
+        self.num_parts = 0
+        self.current_step = 0
+        self.placement_sequence = []
+        self.unplaced_parts = []
+        self.done = False
+        # -----------------
         
         logger.info(f"TDEnvironment initialized with max_parts={max_parts}")
 
@@ -49,6 +55,7 @@ class TDEnvironment:
             self.load_instance(instance)
         else:
             # 使用默认的测试实例
+            logger.warning("No instance provided, using default test instance")
             self.load_default_instance()
             
         # 重置状态
@@ -103,6 +110,9 @@ class TDEnvironment:
             self.parts_info.append([width, height])
             
         self.num_parts = len(self.parts)
+        # --- 在这里添加日志打印 ---
+        # logger.info(f"--- Instance Loaded --- True part count: {self.num_parts} (from instance with {len(instance['parts'])} parts)")
+        # -------------------------
         
     def load_default_instance(self):
         """加载默认测试实例"""

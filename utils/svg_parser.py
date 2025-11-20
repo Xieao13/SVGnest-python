@@ -8,6 +8,10 @@ import pyclipper
 import numpy as np
 from svg.path import parse_path, Line, CubicBezier, QuadraticBezier, Arc, Path
 from svgpathtools import parse_path as parse_path_complex
+import sys
+import os
+# 添加utils目录到路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matrix import Matrix
 from geometry_util import GeometryUtil
 

@@ -7,14 +7,12 @@ import json
 import os
 import argparse
 import time
-from typing import List, Dict, Tuple
 import sys
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.model.td_policy_network import TDPolicyNetwork
-from src.reward.td_reward_calculator import TDRewardCalculator
 from src.environment.td_environment import TDEnvironment, TDDataLoader
 
 try:
@@ -38,7 +36,9 @@ class TDTrainer:
                  reward_weights=(0.4, 0.3, 0.3),
                  use_baseline=True,
                  clip_grad_norm=1.0,
-                 use_wandb=True):
+                 use_wandb=True,
+                 save_interval_steps=10000,
+                 output_dir='./models'):
         """
         初始化训练器
         
@@ -72,6 +72,11 @@ class TDTrainer:
         # 基线值（用于减少方差）
         self.baseline = 0.0
         self.baseline_momentum = 0.9
+        
+        # 步数保存相关
+        self.save_interval_steps = save_interval_steps
+        self.output_dir = output_dir
+        self.global_step = 0
         
         # 训练统计
         self.train_stats = {
@@ -192,7 +197,7 @@ class TDTrainer:
             'baseline': self.baseline
         }
 
-    def train_epoch(self, data_loader: TDDataLoader, epoch: int, max_instances: int = None) -> Dict:
+    def train_epoch(self, data_loader: TDDataLoader, epoch: int, max_instances: int = None, save_callback=None) -> Dict:
         """训练一个epoch"""
         self.policy_net.train()
         
@@ -244,6 +249,14 @@ class TDTrainer:
                     'num_steps': result['num_steps']
                 })
                 
+                # 更新全局步数
+                self.global_step += 1
+                
+                # 检查是否需要保存模型
+                if self.global_step % self.save_interval_steps == 0 and save_callback:
+                    is_best = utilization >= self.train_stats['best_utilization']
+                    save_callback(self.global_step, epoch, is_best)
+                
                 # 每100个实例打印一次进度
                 if (i + 1) % 100 == 0:
                     avg_loss = epoch_stats['total_loss'] / epoch_stats['num_instances']
@@ -294,6 +307,7 @@ class TDTrainer:
         
         eval_stats = {
             'total_reward': 0,
+            'avg_reward': 0,
             'avg_utilization': 0,
             'num_instances': 0,
             'results': [],
@@ -421,7 +435,7 @@ def parse_args():
                         help='训练轮数')
     parser.add_argument('--clip_grad_norm', type=float, default=1.0,
                         help='梯度裁剪最大范数')
-    parser.add_argument('--use_baseline', action='store_true', default=True,
+    parser.add_argument('--use_baseline', default=True,
                         help='是否使用baseline减少方差')
     
     # 奖励权重
@@ -435,9 +449,11 @@ def parse_args():
                         help='日志保存目录')
     parser.add_argument('--save_interval', type=int, default=10,
                         help='模型保存间隔（轮数）')
+    parser.add_argument('--save_interval_steps', type=int, default=10000,
+                        help='模型保存间隔（步数）')
     
     # wandb相关参数
-    parser.add_argument('--use_wandb', action='store_true', default=True,
+    parser.add_argument('--use_wandb', default=True,
                         help='是否使用wandb记录')
     parser.add_argument('--wandb_project', type=str, default='td_svgnest',
                         help='wandb项目名称')
@@ -484,8 +500,8 @@ def main():
     # 创建测试数据加载器
     test_loader = None
     if os.path.exists(args.test_file):
-        test_loader = TDDataLoader(args.test_file)
-        logger.info(f"加载了 {len(test_loader)} 个测试实例")
+        test_loader = TDDataLoader(args.train_file, args.test_file)
+        logger.info(f"加载了 {len(test_loader.test_instances)} 个测试实例")
     else:
         logger.warning(f"测试数据文件不存在: {args.test_file}")
     
@@ -498,11 +514,19 @@ def main():
         reward_weights=tuple(args.reward_weights),
         use_baseline=args.use_baseline,
         clip_grad_norm=args.clip_grad_norm,
-        use_wandb=args.use_wandb
+        use_wandb=args.use_wandb,
+        save_interval_steps=args.save_interval_steps,
+        output_dir=args.output_dir
     )
     
     # 创建输出目录
     os.makedirs(args.output_dir, exist_ok=True)
+    
+    # 创建保存回调函数
+    def save_model_callback(step, epoch, is_best=False):
+        model_path = os.path.join(args.output_dir, f'td_policy_step_{step}.pth')
+        trainer.save_model(model_path, epoch=epoch, is_best=is_best)
+        logger.info(f"在步数 {step} 保存模型: {model_path}")
     
     # 训练循环
     best_test_util = 0.0
@@ -510,7 +534,7 @@ def main():
         logger.info(f"开始第 {epoch + 1}/{args.num_epochs} 轮训练...")
         
         # 训练一个epoch
-        train_stats = trainer.train_epoch(train_loader, epoch, max_instances=args.max_train_instances)
+        train_stats = trainer.train_epoch(train_loader, epoch, max_instances=args.max_train_instances, save_callback=save_model_callback)
         
         logger.info(f"第 {epoch + 1} 轮训练完成:")
         logger.info(f"  平均损失: {train_stats['avg_loss']:.4f}")

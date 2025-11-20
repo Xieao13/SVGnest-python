@@ -155,7 +155,7 @@ class BinPackingPredictor:
 def main():
     parser = argparse.ArgumentParser(description='基于改进的放置顺序预测模型进行零件排布预测')
     parser.add_argument('--model_path', type=str, required=True,
-                       help='训练好的改进模型文件路径 (如: models/best_improved_placement_model.pth)')
+                       help='训练好的改进模型文件路径 (如: models/td_policy_epoch_1.pth)')
     parser.add_argument('--input_file', type=str, required=True,
                        help='输入测试数据文件路径 (JSONL格式)')
     parser.add_argument('--output_file', type=str, required=True,
@@ -163,7 +163,7 @@ def main():
     parser.add_argument('--device', type=str, default='auto',
                        choices=['auto', 'cuda', 'cpu', 'mps'],
                        help='计算设备')
-    parser.add_argument('--max_instances', type=int, default=None,
+    parser.add_argument('--max_instances', type=int, default=10,
                        help='最大处理实例数量，默认处理全部')
     
     args = parser.parse_args()

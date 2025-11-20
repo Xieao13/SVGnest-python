@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 class TDPolicyNetwork(nn.Module):
-    """基于时序差分的策略网络 - 移除bin编码，只使用零件特征"""
     
     def __init__(self, input_dim, hidden_dim, seq_len):
         super(TDPolicyNetwork, self).__init__()

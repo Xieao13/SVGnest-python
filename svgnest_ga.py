@@ -957,9 +957,14 @@ def main(input_file: str, output_file: str):
 
 
 if __name__ == '__main__':
-    # svg_file = "input.svg"
-    jsonl_file = "output/instances.jsonl"
-    # jsonl_file = "/Users/xieao/Documents/new_svgnest/src/results/predictions_20250508_150412.jsonl"
-    output_file = "output/placement_ga_epoch10_0529.jsonl"
-    # main(jsonl_file, output_file)
+    import sys
+    # 支持命令行参数
+    if len(sys.argv) >= 3:
+        jsonl_file = sys.argv[1]
+        output_file = sys.argv[2]
+    else:
+        # 默认使用简单数据集进行测试
+        jsonl_file = "./data/simple_test/sample_5.jsonl"
+        output_file = "./output/simple_test_ga/results.jsonl"
+    
     main(jsonl_file, output_file)
