@@ -1054,7 +1054,7 @@ I've reviewed the provided instructions and the user's intent to revert to the f
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/model/ppo_actor_critic.py</summary>
+<details><summary>Tool use: **write** • Edit file: src/model/ppo_actor_critic.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: 1
@@ -1075,7 +1075,7 @@ Lines added: 1, lines removed: 1
 ```diff
 @@ -65,5 +65,5 @@
                   decoder_hidden: tuple, selected_mask: torch.Tensor, valid_lengths: Optional[torch.Tensor] = None):
-          &quot;&quot;&quot;
+          """
 -         执行一步前向传播，用于PPO的 rollout 过程。
 +         执行一步前向传播。
   
@@ -1102,10 +1102,10 @@ Lines added: 4, lines removed: 3
           logits = self.pointer_v(combined_features).squeeze(-1) # [batch_size, seq_len]
           
 -         # 应用已选择零件的mask
--         logits.masked_fill_(selected_mask, float(&#39;-inf&#39;))
+-         logits.masked_fill_(selected_mask, float('-inf'))
 +         # 应用已选择零件的mask (防止重复选择)
 +         if selected_mask is not None:
-+             logits.masked_fill_(selected_mask, float(&#39;-inf&#39;))
++             logits.masked_fill_(selected_mask, float('-inf'))
   
 -         # --- 新增：应用 padding mask ---
 +         # --- 应用 padding mask (防止选择不存在的零件) ---
@@ -1122,13 +1122,13 @@ Lines added: 47, lines removed: 44
   
 -     def evaluate_actions(self, parts: torch.Tensor, actions: torch.Tensor):
 +     def evaluate_actions(self, parts: torch.Tensor, actions: torch.Tensor, valid_lengths: torch.Tensor):
-          &quot;&quot;&quot;
+          """
 -         在PPO的更新阶段，重新评估一批(state, action)对的log_prob, value和entropy。
 -         
 -         注意：这个函数假设actions是一个序列，但实际上在PPO中，每个(state, action)对是独立的。
 -         当max_steps=1时，每个state只对应一个action，mask应该从空开始。
 -         但是，这会导致问题：在rollout时，mask可能已经包含了一些已选零件，但在更新时mask是空的。
--         &quot;&quot;&quot;
+-         """
 -         batch_size = parts.size(0)
 -         max_steps = actions.size(1)
 +         核心修复：基于完整序列的评估。
@@ -1143,7 +1143,7 @@ Lines added: 47, lines removed: 44
 +             new_log_probs: [batch_size, max_seq_len]
 +             new_values: [batch_size, max_seq_len]
 +             entropy: [batch_size, max_seq_len]
-+         &quot;&quot;&quot;
++         """
 +         batch_size, max_seq_len, _ = parts.shape
           device = parts.device
   
@@ -1176,7 +1176,7 @@ Lines added: 47, lines removed: 44
 -                 if num_selected &gt; 0:
 -                     import logging
 -                     logger = logging.getLogger(__name__)
--                     logger.debug(f&quot;evaluate_actions: step {i}, mask has {num_selected} selected parts&quot;)
+-                     logger.debug(f"evaluate_actions: step {i}, mask has {num_selected} selected parts")
 +         all_log_probs = []
 +         all_values = []
 +         all_entropies = []
@@ -1252,7 +1252,7 @@ I'm currently focused on the padding logic within `compute_gae_and_stack` to han
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/ppo_trainer.py</summary>
+<details><summary>Tool use: **write** • Edit file: src/ppo_trainer.py</summary>
 
 **Chunk 1**
 Lines added: 3, lines removed: 5
@@ -1282,21 +1282,21 @@ Lines added: 417, lines removed: 501
 ```diff
 @@ -25,507 +23,423 @@
       WANDB_AVAILABLE = False
-      print(&quot;Warning: wandb not available. Install with: pip install wandb&quot;)
+      print("Warning: wandb not available. Install with: pip install wandb")
 - 
 + 
 ...
 - 
 - class RolloutBuffer:
--     &quot;&quot;&quot;用于存储PPO rollout数据的缓冲区&quot;&quot;&quot;
+-     """用于存储PPO rollout数据的缓冲区"""
 -     def __init__(self, n_steps: int, state_shape: tuple, device):
 -         self.n_steps = n_steps
 -         self.state_shape = state_shape
 + 
 + class EpisodeBuffer:
-+     &quot;&quot;&quot;
++     """
 +     改进后的缓冲区，存储完整的 Episode 轨迹。
-+     &quot;&quot;&quot;
++     """
 +     def __init__(self, device):
 ...
 - 
@@ -1347,7 +1347,7 @@ Lines added: 417, lines removed: 501
 - class PPOTrainer:
 -     def __init__(self, args):
 -         self.args = args
--         self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)
+-         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 -         
 -         # 环境和数据加载器
 -         self.train_loader = TDDataLoader(args.train_file)
@@ -1369,15 +1369,15 @@ Lines added: 417, lines removed: 501
 -         os.makedirs(args.output_dir, exist_ok=True)
 - 
 -     def learn(self):
--         &quot;&quot;&quot;主训练循环&quot;&quot;&quot;
+-         """主训练循环"""
 -         start_time = time.time()
 -         
 -         # --- 初始化环境状态 ---
 -         instance = self.train_loader.get_random_instance()
--         logger.debug(f&quot;=== Initial instance loaded: bin={instance[&#39;bin&#39;]}, num_parts={len(instance[&#39;parts&#39;])}&quot;)
+-         logger.debug(f"=== Initial instance loaded: bin={instance['bin']}, num_parts={len(instance['parts'])}")
 -         
 -         current_state = torch.tensor(self.env.reset(instance), dtype=torch.float32, device=self.device)
--         logger.debug(f&quot;Initial state shape: {current_state.shape}, env.num_parts={self.env.num_parts}&quot;)
+-         logger.debug(f"Initial state shape: {current_state.shape}, env.num_parts={self.env.num_parts}")
 -         
 -         # 注意：这里的encoder_outputs, decoder_input等状态需要在每次环境重置后都更新
 -         
@@ -1386,14 +1386,14 @@ Lines added: 417, lines removed: 501
 - 
 -         while self.global_step &lt; self.args.total_timesteps:
 -             # --- 数据收集阶段 ---
--             logger.debug(f&quot;\n{&#39;=&#39;*60}\nStarting rollout at step {self.global_step}&quot;)
+-             logger.debug(f"\n{'='*60}\nStarting rollout at step {self.global_step}")
 -             self.policy.eval()
 -             self.buffer.reset()
 - 
 -             # 对整个问题实例进行一次编码，这个编码在当前episode中共享
 -             with torch.no_grad():
 -                 encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)
--             logger.debug(f&quot;Encoder outputs shape: {encoder_outputs.shape}&quot;)
+-             logger.debug(f"Encoder outputs shape: {encoder_outputs.shape}")
 -             
 -             # 初始化解码器状态
 -             decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)
@@ -1402,7 +1402,7 @@ Lines added: 417, lines removed: 501
 - 
 -             # 获取当前 episode 的有效长度
 -             valid_length = torch.tensor([self.env.num_parts], device=self.device)
--             logger.debug(f&quot;Valid length for current instance: {valid_length.item()}&quot;)
+-             logger.debug(f"Valid length for current instance: {valid_length.item()}")
 - 
 -             for step_idx in range(self.args.n_steps):
 -                 self.global_step += 1
@@ -1416,32 +1416,32 @@ Lines added: 417, lines removed: 501
 -                     
 -                     # Debug: 输出logits统计信息
 -                     if step_idx &lt; 5 or self.global_step % 500 == 0:  # 只在前5步或每500步输出
--                         logger.debug(f&quot;Step {self.global_step}: logits range=[{logits.min().item():.3f}, {logits.max().item():.3f}], &quot;
--                                    f&quot;mean={logits.mean().item():.3f}, value={value.item():.3f}&quot;)
+-                         logger.debug(f"Step {self.global_step}: logits range=[{logits.min().item():.3f}, {logits.max().item():.3f}], "
+-                                    f"mean={logits.mean().item():.3f}, value={value.item():.3f}")
 -                         # 输出前5个最高概率的动作
 -                         probs = torch.softmax(logits, dim=-1).squeeze()
 -                         top_probs, top_indices = torch.topk(probs, min(5, valid_length.item()))
--                         logger.debug(f&quot;  Top 5 actions: indices={top_indices.tolist()}, probs={top_probs.tolist()}&quot;)
+-                         logger.debug(f"  Top 5 actions: indices={top_indices.tolist()}, probs={top_probs.tolist()}")
 -                     
 -                     dist = Categorical(logits=logits)
 -                     action = dist.sample()
 -                     log_prob = dist.log_prob(action)
 -                     
 -                     if step_idx &lt; 5 or self.global_step % 500 == 0:
--                         logger.debug(f&quot;  Selected action: {action.item()}, log_prob: {log_prob.item():.3f}&quot;)
+-                         logger.debug(f"  Selected action: {action.item()}, log_prob: {log_prob.item():.3f}")
 -                         # Debug: 检查mask状态
 -                         num_selected = selected_mask.sum().item()
--                         logger.debug(f&quot;  Mask status: {num_selected} parts already selected, mask={selected_mask.nonzero(as_tuple=True)[0].tolist()[:10]}&quot;)  # 只显示前10个
+-                         logger.debug(f"  Mask status: {num_selected} parts already selected, mask={selected_mask.nonzero(as_tuple=True)[0].tolist()[:10]}")  # 只显示前10个
 - 
 -                 # 与环境交互
 -                 next_state_np, reward, done, info = self.env.step(action.item())
 -                 
 -                 # Debug: 输出奖励信息
 -                 if step_idx &lt; 5 or self.global_step % 500 == 0:
--                     logger.debug(f&quot;  Reward: {reward:.4f}, Done: {done}, Invalid: {info.get(&#39;invalid_action&#39;, False)}&quot;)
--                     if info.get(&#39;invalid_action&#39;, False):
--                         logger.debug(f&quot;  ⚠️ INVALID ACTION DETECTED! Action {action.item()} was already selected.&quot;)
--                         logger.debug(f&quot;  Current placement_sequence: {info.get(&#39;placement_sequence&#39;, [])}&quot;)
+-                     logger.debug(f"  Reward: {reward:.4f}, Done: {done}, Invalid: {info.get('invalid_action', False)}")
+-                     if info.get('invalid_action', False):
+-                         logger.debug(f"  ⚠️ INVALID ACTION DETECTED! Action {action.item()} was already selected.")
+-                         logger.debug(f"  Current placement_sequence: {info.get('placement_sequence', [])}")
 -                 
 -                 # 添加到缓冲区
 -                 self.buffer.add(current_state, action, log_prob, reward, done, value)
@@ -1455,7 +1455,7 @@ Lines added: 417, lines removed: 501
 -                 # Debug: 验证mask更新
 -                 if step_idx &lt; 5 or self.global_step % 500 == 0:
 -                     if not selected_mask[action.item()]:
--                         logger.debug(f&quot;  ⚠️ WARNING: Mask was not updated correctly for action {action.item()}!&quot;)
+-                         logger.debug(f"  ⚠️ WARNING: Mask was not updated correctly for action {action.item()}!")
 -                 
 -                 episode_reward += reward
 -                 episode_len += 1
@@ -1464,27 +1464,27 @@ Lines added: 417, lines removed: 501
 -                 if done:
 -                     # 1. 记录完成的Episode信息
 -                     metrics = self.env.get_placement_metrics()
--                     utilization = metrics.get(&#39;material_utilization&#39;, 0)
--                     logger.info(f&quot;Step {self.global_step}: Episode finished. Reward={episode_reward:.2f}, Length={episode_len}, Utilization={utilization:.3f}&quot;)
--                     logger.debug(f&quot;  Episode details - Placement sequence: {info.get(&#39;placement_sequence&#39;, [])}&quot;)
--                     logger.debug(f&quot;  Full metrics: {metrics}&quot;)
+-                     utilization = metrics.get('material_utilization', 0)
+-                     logger.info(f"Step {self.global_step}: Episode finished. Reward={episode_reward:.2f}, Length={episode_len}, Utilization={utilization:.3f}")
+-                     logger.debug(f"  Episode details - Placement sequence: {info.get('placement_sequence', [])}")
+-                     logger.debug(f"  Full metrics: {metrics}")
 -                     if self.use_wandb:
 -                         wandb.log({
--                             &quot;rollout/episode_reward&quot;: episode_reward,
--                             &quot;rollout/episode_length&quot;: episode_len,
--                             &quot;rollout/episode_utilization&quot;: utilization,
--                             &quot;global_step&quot;: self.global_step
+-                             "rollout/episode_reward": episode_reward,
+-                             "rollout/episode_length": episode_len,
+-                             "rollout/episode_utilization": utilization,
+-                             "global_step": self.global_step
 -                         })
 -                     
 -                     # 2. 重置环境和智能体状态，为下一个Episode做准备
 -                     # 重置环境和智能体状态
 -                     instance = self.train_loader.get_random_instance()
--                     logger.debug(f&quot;  New instance loaded: bin={instance[&#39;bin&#39;]}, num_parts={len(instance[&#39;parts&#39;])}&quot;)
+-                     logger.debug(f"  New instance loaded: bin={instance['bin']}, num_parts={len(instance['parts'])}")
 -                     current_state = torch.tensor(self.env.reset(instance), dtype=torch.float32, device=self.device)
 -                     
 -                     # --- 新增：重置后立即更新 valid_length ---
 -                     valid_length = torch.tensor([self.env.num_parts], device=self.device)
--                     logger.debug(f&quot;  Reset: valid_length={valid_length.item()}, state_shape={current_state.shape}&quot;)
+-                     logger.debug(f"  Reset: valid_length={valid_length.item()}, state_shape={current_state.shape}")
 -                     # ------------------------------------------
 -                     
 -                     # 重新编码新问题的状态
@@ -1498,9 +1498,9 @@ Lines added: 417, lines removed: 501
 -                     selected_mask.zero_()
 -                     
 -                     # Debug: 验证重置后的状态
--                     logger.debug(f&quot;  After reset: env.placement_sequence={self.env.placement_sequence}, &quot;
--                                f&quot;mask_sum={selected_mask.sum().item()}, &quot;
--                                f&quot;env.num_parts={self.env.num_parts}&quot;)
+-                     logger.debug(f"  After reset: env.placement_sequence={self.env.placement_sequence}, "
+-                                f"mask_sum={selected_mask.sum().item()}, "
+-                                f"env.num_parts={self.env.num_parts}")
 - 
 -                     # 3. 重置Episode的追踪器
 -                     episode_reward, episode_len = 0, 0
@@ -1518,19 +1518,19 @@ Lines added: 417, lines removed: 501
 -                     encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),
 -                     decoder_hidden, selected_mask.unsqueeze(0)
 -                 )
--             logger.debug(f&quot;Computing GAE with last_value={last_value.item():.3f}&quot;)
+-             logger.debug(f"Computing GAE with last_value={last_value.item():.3f}")
 -             self.buffer.compute_returns_and_advantages(last_value, self.args.gamma, self.args.gae_lambda)
 -             
 -             # Debug: 输出advantages和returns的统计信息
--             logger.debug(f&quot;GAE computed - advantages: mean={self.buffer.advantages.mean().item():.3f}, &quot;
--                        f&quot;std={self.buffer.advantages.std().item():.3f}, &quot;
--                        f&quot;min={self.buffer.advantages.min().item():.3f}, &quot;
--                        f&quot;max={self.buffer.advantages.max().item():.3f}&quot;)
--             logger.debug(f&quot;Returns: mean={self.buffer.returns.mean().item():.3f}, &quot;
--                        f&quot;std={self.buffer.returns.std().item():.3f}&quot;)
+-             logger.debug(f"GAE computed - advantages: mean={self.buffer.advantages.mean().item():.3f}, "
+-                        f"std={self.buffer.advantages.std().item():.3f}, "
+-                        f"min={self.buffer.advantages.min().item():.3f}, "
+-                        f"max={self.buffer.advantages.max().item():.3f}")
+-             logger.debug(f"Returns: mean={self.buffer.returns.mean().item():.3f}, "
+-                        f"std={self.buffer.returns.std().item():.3f}")
 - 
 -             # --- 学习更新阶段 (!!! 这里是核心修改 !!!) ---
--             logger.debug(f&quot;\nStarting policy update: {self.args.n_epochs} epochs, batch_size={self.args.batch_size}&quot;)
+-             logger.debug(f"\nStarting policy update: {self.args.n_epochs} epochs, batch_size={self.args.batch_size}")
 -             self.policy.train()
 -             
 -             epoch_policy_losses = []
@@ -1560,10 +1560,10 @@ Lines added: 417, lines removed: 501
 -                     # Debug: 比较rollout和更新阶段的log_prob（第一个epoch的前3个batch）
 -                     if epoch_idx == 0 and batch_idx &lt;= 3:
 -                         log_prob_diff = (new_log_probs - old_log_probs).abs()
--                         logger.debug(f&quot;  Log prob comparison: old_mean={old_log_probs.mean().item():.3f}, &quot;
--                                    f&quot;new_mean={new_log_probs.mean().item():.3f}, &quot;
--                                    f&quot;diff_mean={log_prob_diff.mean().item():.3f}, &quot;
--                                    f&quot;max_diff={log_prob_diff.max().item():.3f}&quot;)
+-                         logger.debug(f"  Log prob comparison: old_mean={old_log_probs.mean().item():.3f}, "
+-                                    f"new_mean={new_log_probs.mean().item():.3f}, "
+-                                    f"diff_mean={log_prob_diff.mean().item():.3f}, "
+-                                    f"max_diff={log_prob_diff.max().item():.3f}")
 -                     
 -                     # 标准化优势 (可选但推荐)
 -                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -1592,13 +1592,13 @@ Lines added: 417, lines removed: 501
 -                     
 -                     # Debug: 输出第一个epoch的前3个batch的详细信息
 -                     if epoch_idx == 0 and batch_idx &lt;= 3:
--                         logger.debug(f&quot;  Epoch {epoch_idx}, Batch {batch_idx}:&quot;)
--                         logger.debug(f&quot;    Ratio: mean={ratio.mean().item():.3f}, std={ratio.std().item():.3f}, &quot;
--                                    f&quot;min={ratio.min().item():.3f}, max={ratio.max().item():.3f}&quot;)
--                         logger.debug(f&quot;    Losses: policy={policy_loss.item():.4f}, value={value_loss.item():.4f}, &quot;
--                                    f&quot;entropy={entropy_loss.item():.4f}, total={loss.item():.4f}&quot;)
+-                         logger.debug(f"  Epoch {epoch_idx}, Batch {batch_idx}:")
+-                         logger.debug(f"    Ratio: mean={ratio.mean().item():.3f}, std={ratio.std().item():.3f}, "
+-                                    f"min={ratio.min().item():.3f}, max={ratio.max().item():.3f}")
+-                         logger.debug(f"    Losses: policy={policy_loss.item():.4f}, value={value_loss.item():.4f}, "
+-                                    f"entropy={entropy_loss.item():.4f}, total={loss.item():.4f}")
 -                         clipped_ratio = torch.sum((ratio &lt; 1 - self.args.clip_range) | (ratio &gt; 1 + self.args.clip_range)).item()
--                         logger.debug(f&quot;    Clipped ratios: {clipped_ratio}/{ratio.numel()} ({100*clipped_ratio/ratio.numel():.1f}%)&quot;)
+-                         logger.debug(f"    Clipped ratios: {clipped_ratio}/{ratio.numel()} ({100*clipped_ratio/ratio.numel():.1f}%)")
 -                     
 -                     # --- 优化 ---
 -                     self.optimizer.zero_grad()
@@ -1606,7 +1606,7 @@ Lines added: 417, lines removed: 501
 -                     grad_norm = nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)
 -                     
 -                     if epoch_idx == 0 and batch_idx &lt;= 3:
--                         logger.debug(f&quot;    Gradient norm before clipping: {grad_norm:.3f}&quot;)
+-                         logger.debug(f"    Gradient norm before clipping: {grad_norm:.3f}")
 -                     
 -                     self.optimizer.step()
 -             
@@ -1616,27 +1616,27 @@ Lines added: 417, lines removed: 501
 -             avg_total_loss = np.mean(epoch_total_losses)
 -             avg_ratio = np.mean(epoch_ratios)
 -             std_ratio = np.std(epoch_ratios)
--             logger.debug(f&quot;\nUpdate summary - Average losses: policy={avg_policy_loss:.4f}, value={avg_value_loss:.4f}, total={avg_total_loss:.4f}&quot;)
--             logger.debug(f&quot;Ratio statistics: mean={avg_ratio:.3f}, std={std_ratio:.3f}&quot;)
--             logger.info(f&quot;Step {self.global_step}: Update completed. Avg total loss={avg_total_loss:.4f}&quot;)
+-             logger.debug(f"\nUpdate summary - Average losses: policy={avg_policy_loss:.4f}, value={avg_value_loss:.4f}, total={avg_total_loss:.4f}")
+-             logger.debug(f"Ratio statistics: mean={avg_ratio:.3f}, std={std_ratio:.3f}")
+-             logger.info(f"Step {self.global_step}: Update completed. Avg total loss={avg_total_loss:.4f}")
 -             
 -             if self.use_wandb:
 -                 wandb.log({
--                     &quot;train/policy_loss&quot;: avg_policy_loss,
--                     &quot;train/value_loss&quot;: avg_value_loss,
--                     &quot;train/entropy_loss&quot;: -np.mean([e for e in epoch_total_losses]),  # approximation
--                     &quot;train/total_loss&quot;: avg_total_loss,
--                     &quot;train/ratio_mean&quot;: avg_ratio,
--                     &quot;train/ratio_std&quot;: std_ratio,
--                     &quot;global_step&quot;: self.global_step
+-                     "train/policy_loss": avg_policy_loss,
+-                     "train/value_loss": avg_value_loss,
+-                     "train/entropy_loss": -np.mean([e for e in epoch_total_losses]),  # approximation
+-                     "train/total_loss": avg_total_loss,
+-                     "train/ratio_mean": avg_ratio,
+-                     "train/ratio_std": std_ratio,
+-                     "global_step": self.global_step
 -                 })
 -     def evaluate(self):
--         logger.debug(f&quot;\n{&#39;=&#39;*60}\nStarting evaluation at step {self.global_step}&quot;)
+-         logger.debug(f"\n{'='*60}\nStarting evaluation at step {self.global_step}")
 -         self.policy.eval()
 -         total_util = 0.0
 -         num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))
 -         
--         logger.info(f&quot;--- Running evaluation for {num_instances} instances ---&quot;)
+-         logger.info(f"--- Running evaluation for {num_instances} instances ---")
 -         
 -         # 记录前几个实例的详细信息
 -         detailed_results = []
@@ -1669,86 +1669,86 @@ Lines added: 417, lines removed: 501
 -                     selected_mask[action.item()] = True
 -             
 -             metrics = self.env.get_placement_metrics()
--             util = metrics.get(&#39;material_utilization&#39;, 0)
+-             util = metrics.get('material_utilization', 0)
 -             total_util += util
 -             
 -             # 记录前5个实例的详细结果
 -             if i &lt; 5:
 -                 detailed_results.append({
--                     &#39;instance_id&#39;: i,
--                     &#39;utilization&#39;: util,
--                     &#39;bbox_ratio&#39;: metrics.get(&#39;bbox_ratio&#39;, 0),
--                     &#39;waste_area&#39;: metrics.get(&#39;waste_area&#39;, 0)
+-                     'instance_id': i,
+-                     'utilization': util,
+-                     'bbox_ratio': metrics.get('bbox_ratio', 0),
+-                     'waste_area': metrics.get('waste_area', 0)
 -                 })
--                 logger.debug(f&quot;  Instance {i}: util={util:.4f}, bbox_ratio={metrics.get(&#39;bbox_ratio&#39;, 0):.4f}&quot;)
+-                 logger.debug(f"  Instance {i}: util={util:.4f}, bbox_ratio={metrics.get('bbox_ratio', 0):.4f}")
 -         
 -         avg_util = total_util / num_instances
--         logger.info(f&quot;--- Evaluation finished. Average Utilization: {avg_util:.4f} ---&quot;)
--         logger.debug(f&quot;Evaluation details (first 5): {detailed_results}&quot;)
+-         logger.info(f"--- Evaluation finished. Average Utilization: {avg_util:.4f} ---")
+-         logger.debug(f"Evaluation details (first 5): {detailed_results}")
 - 
 -         if self.use_wandb:
 -             wandb.log({
--                 &quot;eval/avg_utilization&quot;: avg_util,
--                 &quot;global_step&quot;: self.global_step
+-                 "eval/avg_utilization": avg_util,
+-                 "global_step": self.global_step
 -             })
 - 
 -         if avg_util &gt; self.best_eval_util:
 -             self.best_eval_util = avg_util
--             logger.info(f&quot;New best evaluation utilization: {self.best_eval_util:.4f}. Saving model.&quot;)
+-             logger.info(f"New best evaluation utilization: {self.best_eval_util:.4f}. Saving model.")
 -             self.save_model(is_best=True)
 -         
 -         self.save_model(is_best=False) # 保存最新模型
 - 
 -     def save_model(self, is_best=False):
--         filename = f&#39;ppo_policy_step_{self.global_step}.pth&#39;
+-         filename = f'ppo_policy_step_{self.global_step}.pth'
 -         if is_best:
--             filename = &#39;ppo_policy_best.pth&#39;
+-             filename = 'ppo_policy_best.pth'
 -         
 -         filepath = os.path.join(self.args.output_dir, filename)
 -         torch.save({
--             &#39;model_state_dict&#39;: self.policy.state_dict(),
--             &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),
--             &#39;global_step&#39;: self.global_step,
--             &#39;args&#39;: self.args
+-             'model_state_dict': self.policy.state_dict(),
+-             'optimizer_state_dict': self.optimizer.state_dict(),
+-             'global_step': self.global_step,
+-             'args': self.args
 -         }, filepath)
--         logger.info(f&quot;Model saved to: {filepath}&quot;)
+-         logger.info(f"Model saved to: {filepath}")
 - 
 - def parse_args():
--     parser = argparse.ArgumentParser(description=&#39;PPO Trainer for 2D Nesting Problem&#39;)
+-     parser = argparse.ArgumentParser(description='PPO Trainer for 2D Nesting Problem')
 -     
 -     # --- Data and Paths ---
--     parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;)
--     parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)
--     parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models_ppo&#39;, help=&#39;Directory to save models&#39;)
--     parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs_ppo&#39;, help=&#39;Directory to save logs&#39;)
+-     parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl')
+-     parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')
+-     parser.add_argument('--output_dir', type=str, default='./models_ppo', help='Directory to save models')
+-     parser.add_argument('--log_dir', type=str, default='./logs_ppo', help='Directory to save logs')
 -     
 -     # --- Model Hyperparameters ---
--     parser.add_argument(&#39;--input_dim&#39;, type=int, default=2)
--     parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)
--     parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)
+-     parser.add_argument('--input_dim', type=int, default=2)
+-     parser.add_argument('--hidden_dim', type=int, default=128)
+-     parser.add_argument('--max_seq_len', type=int, default=60)
 -     
 -     # --- PPO Hyperparameters ---
--     parser.add_argument(&#39;--total_timesteps&#39;, type=int, default=1_000_000, help=&#39;Total timesteps to train the agent&#39;)
--     parser.add_argument(&#39;--learning_rate&#39;, type=float, default=3e-4)
--     parser.add_argument(&#39;--n_steps&#39;, type=int, default=2048, help=&#39;Number of steps to run for each environment per update&#39;)
--     parser.add_argument(&#39;--batch_size&#39;, type=int, default=64, help=&#39;Mini-batch size for PPO updates&#39;)
--     parser.add_argument(&#39;--n_epochs&#39;, type=int, default=10, help=&#39;Number of epochs to update the policy on the collected data&#39;)
--     parser.add_argument(&#39;--gamma&#39;, type=float, default=0.99)
--     parser.add_argument(&#39;--gae_lambda&#39;, type=float, default=0.95)
--     parser.add_argument(&#39;--clip_range&#39;, type=float, default=0.2)
--     parser.add_argument(&#39;--ent_coef&#39;, type=float, default=0.0, help=&#39;Entropy coefficient&#39;)
--     parser.add_argument(&#39;--vf_coef&#39;, type=float, default=0.5, help=&#39;Value function coefficient&#39;)
--     parser.add_argument(&#39;--max_grad_norm&#39;, type=float, default=0.5)
+-     parser.add_argument('--total_timesteps', type=int, default=1_000_000, help='Total timesteps to train the agent')
+-     parser.add_argument('--learning_rate', type=float, default=3e-4)
+-     parser.add_argument('--n_steps', type=int, default=2048, help='Number of steps to run for each environment per update')
+-     parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size for PPO updates')
+-     parser.add_argument('--n_epochs', type=int, default=10, help='Number of epochs to update the policy on the collected data')
+-     parser.add_argument('--gamma', type=float, default=0.99)
+-     parser.add_argument('--gae_lambda', type=float, default=0.95)
+-     parser.add_argument('--clip_range', type=float, default=0.2)
+-     parser.add_argument('--ent_coef', type=float, default=0.0, help='Entropy coefficient')
+-     parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function coefficient')
+-     parser.add_argument('--max_grad_norm', type=float, default=0.5)
 -     
 -     # --- Environment and Reward ---
--     parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])
+-     parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])
 -     
 -     # --- Training and Logging ---
--     parser.add_argument(&#39;--eval_interval&#39;, type=int, default=10000, help=&#39;Evaluate the agent every N steps&#39;)
--     parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=1000)
--     parser.add_argument(&#39;--use_wandb&#39;, action=&#39;store_true&#39;, default=True, help=&#39;Use Weights &amp; Biases for logging&#39;)
--     parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;ppo_svgnest&#39;)
--     parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=f&#39;ppo_run_{time.strftime(&quot;%Y%m%d-%H%M%S&quot;)}&#39;)
+-     parser.add_argument('--eval_interval', type=int, default=10000, help='Evaluate the agent every N steps')
+-     parser.add_argument('--max_test_instances', type=int, default=1000)
+-     parser.add_argument('--use_wandb', action='store_true', default=True, help='Use Weights &amp; Biases for logging')
+-     parser.add_argument('--wandb_project', type=str, default='ppo_svgnest')
+-     parser.add_argument('--wandb_run_name', type=str, default=f'ppo_run_{time.strftime("%Y%m%d-%H%M%S")}')
 -     
 -     return parser.parse_args()
 - 
@@ -1759,13 +1759,13 @@ Lines added: 417, lines removed: 501
 -     os.makedirs(args.log_dir, exist_ok=True)
 -     
 -     # 创建两个handler：一个用于DEBUG级别的文件日志，一个用于INFO级别的控制台输出
--     file_handler = logging.FileHandler(os.path.join(args.log_dir, &#39;train_ppo.log&#39;))
+-     file_handler = logging.FileHandler(os.path.join(args.log_dir, 'train_ppo.log'))
 -     file_handler.setLevel(logging.DEBUG)
--     file_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;))
+-     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 -     
 -     console_handler = logging.StreamHandler(sys.stdout)
 -     console_handler.setLevel(logging.INFO)  # 控制台只显示INFO及以上
--     console_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(levelname)s - %(message)s&#39;))
+-     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 -     
 -     # 配置根logger
 -     logging.basicConfig(
@@ -1773,8 +1773,8 @@ Lines added: 417, lines removed: 501
 -         handlers=[file_handler, console_handler]
 -     )
 -     
--     logger.info(f&quot;Training arguments: {args}&quot;)
--     logger.debug(&quot;Debug logging is enabled. Detailed logs will be written to file.&quot;)
+-     logger.info(f"Training arguments: {args}")
+-     logger.debug("Debug logging is enabled. Detailed logs will be written to file.")
 -     
 -     # --- Setup W&amp;B ---
 -     if args.use_wandb and WANDB_AVAILABLE:
@@ -1786,19 +1786,19 @@ Lines added: 417, lines removed: 501
 -     
 -     # --- Create and run trainer ---
 -     trainer = PPOTrainer(args)
--     logger.info(&quot;Starting PPO training...&quot;)
+-     logger.info("Starting PPO training...")
 -     trainer.learn()
--     logger.info(&quot;Training finished!&quot;)
+-     logger.info("Training finished!")
 -     
 -     if args.use_wandb and WANDB_AVAILABLE:
 -         wandb.finish()
 - 
-- if __name__ == &#39;__main__&#39;:
+- if __name__ == '__main__':
 -     main()
 +         self.episodes = [] # 存储每个 episode 的字典
 + 
 +     def add_episode(self, episode_data: Dict):
-+         &quot;&quot;&quot;
++         """
 +         episode_data 包含:
 +         - state: (max_seq_len, input_dim) 问题实例
 +         - actions: (seq_len,)
@@ -1806,13 +1806,13 @@ Lines added: 417, lines removed: 501
 +         - rewards: (seq_len,)
 +         - values: (seq_len,)
 +         - valid_length: int
-+         &quot;&quot;&quot;
++         """
 +         self.episodes.append(episode_data)
 + 
 +     def compute_gae_and_stack(self, gamma: float, gae_lambda: float):
-+         &quot;&quot;&quot;
++         """
 +         为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。
-+         &quot;&quot;&quot;
++         """
 +         all_states = []
 +         all_actions = []
 +         all_log_probs = []
@@ -1826,12 +1826,12 @@ Lines added: 417, lines removed: 501
 + 
 +         # 获取 state 的形状以确定 max_seq_len
 +         # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]
-+         max_len = self.episodes[0][&#39;state&#39;].shape[0]
++         max_len = self.episodes[0]['state'].shape[0]
 +         
 +         for ep in self.episodes:
 +             # 转换为 Tensor
-+             rewards = torch.tensor(ep[&#39;rewards&#39;], dtype=torch.float32, device=self.device)
-+             values = torch.tensor(ep[&#39;values&#39;], dtype=torch.float32, device=self.device)
++             rewards = torch.tensor(ep['rewards'], dtype=torch.float32, device=self.device)
++             values = torch.tensor(ep['values'], dtype=torch.float32, device=self.device)
 +             
 +             seq_len = len(rewards)
 +             advantages = torch.zeros_like(rewards)
@@ -1850,13 +1850,13 @@ Lines added: 417, lines removed: 501
 +             
 +             returns = advantages + values
 +             
-+             all_states.append(torch.tensor(ep[&#39;state&#39;], dtype=torch.float32, device=self.device))
-+             all_actions.append(torch.tensor(ep[&#39;actions&#39;], dtype=torch.long, device=self.device))
-+             all_log_probs.append(torch.tensor(ep[&#39;log_probs&#39;], dtype=torch.float32, device=self.device))
++             all_states.append(torch.tensor(ep['state'], dtype=torch.float32, device=self.device))
++             all_actions.append(torch.tensor(ep['actions'], dtype=torch.long, device=self.device))
++             all_log_probs.append(torch.tensor(ep['log_probs'], dtype=torch.float32, device=self.device))
 +             all_advantages.append(advantages)
 +             all_returns.append(returns)
 +             all_values.append(values)
-+             all_valid_lengths.append(ep[&#39;valid_length&#39;])
++             all_valid_lengths.append(ep['valid_length'])
 + 
 +         # 堆叠并 Padding
 +         batch_size = len(self.episodes)
@@ -1892,7 +1892,7 @@ Lines added: 417, lines removed: 501
 + class PPOTrainer:
 +     def __init__(self, args):
 +         self.args = args
-+         self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)
++         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 +         
 +         # 环境和数据加载器
 +         self.train_loader = TDDataLoader(args.train_file)
@@ -1914,8 +1914,8 @@ Lines added: 417, lines removed: 501
 +         os.makedirs(args.output_dir, exist_ok=True)
 + 
 +     def learn(self):
-+         &quot;&quot;&quot;主训练循环&quot;&quot;&quot;
-+         logger.info(&quot;Starting PPO training loop (Trajectory-based)...&quot;)
++         """主训练循环"""
++         logger.info("Starting PPO training loop (Trajectory-based)...")
 +         
 +         while self.global_step &lt; self.args.total_timesteps:
 +             # 1. 数据收集阶段 (Collection Phase)
@@ -1983,12 +1983,12 @@ Lines added: 417, lines removed: 501
 +                 
 +                 # Episode 结束，存入 Buffer
 +                 self.buffer.add_episode({
-+                     &#39;state&#39;: state_np, # 原始状态 (max_parts, 2)
-+                     &#39;actions&#39;: ep_actions,
-+                     &#39;log_probs&#39;: ep_log_probs,
-+                     &#39;rewards&#39;: ep_rewards,
-+                     &#39;values&#39;: ep_values,
-+                     &#39;valid_length&#39;: valid_length
++                     'state': state_np, # 原始状态 (max_parts, 2)
++                     'actions': ep_actions,
++                     'log_probs': ep_log_probs,
++                     'rewards': ep_rewards,
++                     'values': ep_values,
++                     'valid_length': valid_length
 +                 })
 +                 
 +                 episodes_collected += 1
@@ -1998,13 +1998,13 @@ Lines added: 417, lines removed: 501
 +                 # 记录日志 (采样频率降低以避免刷屏)
 +                 if self.episode_count % 10 == 0:
 +                     metrics = self.env.get_placement_metrics()
-+                     util = metrics.get(&#39;material_utilization&#39;, 0)
-+                     logger.info(f&quot;Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}&quot;)
++                     util = metrics.get('material_utilization', 0)
++                     logger.info(f"Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}")
 +                     if self.use_wandb:
-+                         wandb.log({&quot;rollout/ep_reward&quot;: sum(ep_rewards), &quot;rollout/ep_util&quot;: util, &quot;global_step&quot;: self.global_step})
++                         wandb.log({"rollout/ep_reward": sum(ep_rewards), "rollout/ep_util": util, "global_step": self.global_step})
 + 
 +             # 2. 更新阶段 (Update Phase)
-+             logger.debug(&quot;Starting PPO update...&quot;)
++             logger.debug("Starting PPO update...")
 +             self.policy.train()
 +             
 +             # 计算 GAE 并获取堆叠后的 Batch 数据
@@ -2040,7 +2040,7 @@ Lines added: 417, lines removed: 501
 +                 policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)
 +                 
 +                 # 2. Value Loss
-+                 value_loss = nn.functional.mse_loss(new_values, returns_b, reduction=&#39;none&#39;)
++                 value_loss = nn.functional.mse_loss(new_values, returns_b, reduction='none')
 +                 value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)
 +                 
 +                 # 3. Entropy Loss
@@ -2056,15 +2056,15 @@ Lines added: 417, lines removed: 501
 +                 self.optimizer.step()
 +                 
 +                 if epoch == 0:
-+                     logger.debug(f&quot;Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}&quot;)
++                     logger.debug(f"Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}")
 +             
 +             if self.use_wandb:
 +                 wandb.log({
-+                     &quot;train/loss&quot;: loss.item(),
-+                     &quot;train/policy_loss&quot;: policy_loss.item(),
-+                     &quot;train/value_loss&quot;: value_loss.item(),
-+                     &quot;train/entropy_loss&quot;: entropy_loss.item(),
-+                     &quot;global_step&quot;: self.global_step
++                     "train/loss": loss.item(),
++                     "train/policy_loss": policy_loss.item(),
++                     "train/value_loss": value_loss.item(),
++                     "train/entropy_loss": entropy_loss.item(),
++                     "global_step": self.global_step
 +                 })
 + 
 +             # 定期评估
@@ -2072,7 +2072,7 @@ Lines added: 417, lines removed: 501
 +                 self.evaluate()
 + 
 +     def evaluate(self):
-+         logger.info(f&quot;Evaluating at step {self.global_step}...&quot;)
++         logger.info(f"Evaluating at step {self.global_step}...")
 +         self.policy.eval()
 +         total_util = 0.0
 +         num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))
@@ -2105,12 +2105,12 @@ Lines added: 417, lines removed: 501
 +                     selected_mask[action.item()] = True
 +             
 +             metrics = self.env.get_placement_metrics()
-+             total_util += metrics.get(&#39;material_utilization&#39;, 0)
++             total_util += metrics.get('material_utilization', 0)
 +         
 +         avg_util = total_util / num_instances
-+         logger.info(f&quot;Eval Avg Util: {avg_util:.4f}&quot;)
++         logger.info(f"Eval Avg Util: {avg_util:.4f}")
 +         if self.use_wandb:
-+             wandb.log({&quot;eval/avg_util&quot;: avg_util, &quot;global_step&quot;: self.global_step})
++             wandb.log({"eval/avg_util": avg_util, "global_step": self.global_step})
 +             
 +         if avg_util &gt; self.best_eval_util:
 +             self.best_eval_util = avg_util
@@ -2118,50 +2118,50 @@ Lines added: 417, lines removed: 501
 +         self.save_model(is_best=False)
 + 
 +     def save_model(self, is_best=False):
-+         filename = &#39;ppo_policy_best.pth&#39; if is_best else f&#39;ppo_policy_latest.pth&#39;
++         filename = 'ppo_policy_best.pth' if is_best else f'ppo_policy_latest.pth'
 +         filepath = os.path.join(self.args.output_dir, filename)
 +         torch.save({
-+             &#39;model_state_dict&#39;: self.policy.state_dict(),
-+             &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),
-+             &#39;args&#39;: self.args
++             'model_state_dict': self.policy.state_dict(),
++             'optimizer_state_dict': self.optimizer.state_dict(),
++             'args': self.args
 +         }, filepath)
 + 
 + def parse_args():
-+     parser = argparse.ArgumentParser(description=&#39;PPO Trainer for 2D Nesting Problem&#39;)
++     parser = argparse.ArgumentParser(description='PPO Trainer for 2D Nesting Problem')
 +     
 +     # --- Data and Paths ---
-+     parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;)
-+     parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)
-+     parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models_ppo&#39;, help=&#39;Directory to save models&#39;)
-+     parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs_ppo&#39;, help=&#39;Directory to save logs&#39;)
++     parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl')
++     parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')
++     parser.add_argument('--output_dir', type=str, default='./models_ppo', help='Directory to save models')
++     parser.add_argument('--log_dir', type=str, default='./logs_ppo', help='Directory to save logs')
 +     
 +     # --- Model Hyperparameters ---
-+     parser.add_argument(&#39;--input_dim&#39;, type=int, default=2)
-+     parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)
-+     parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)
++     parser.add_argument('--input_dim', type=int, default=2)
++     parser.add_argument('--hidden_dim', type=int, default=128)
++     parser.add_argument('--max_seq_len', type=int, default=60)
 +     
 +     # --- PPO Hyperparameters ---
-+     parser.add_argument(&#39;--total_timesteps&#39;, type=int, default=1_000_000, help=&#39;Total timesteps to train the agent&#39;)
-+     parser.add_argument(&#39;--learning_rate&#39;, type=float, default=1e-4)
++     parser.add_argument('--total_timesteps', type=int, default=1_000_000, help='Total timesteps to train the agent')
++     parser.add_argument('--learning_rate', type=float, default=1e-4)
 +     # 这里 batch_size 修改为 episodes per update
-+     parser.add_argument(&#39;--batch_size&#39;, type=int, default=16, help=&#39;Number of episodes per PPO update&#39;)
-+     parser.add_argument(&#39;--n_epochs&#39;, type=int, default=4, help=&#39;Number of epochs to update the policy on the collected data&#39;)
-+     parser.add_argument(&#39;--gamma&#39;, type=float, default=0.99)
-+     parser.add_argument(&#39;--gae_lambda&#39;, type=float, default=0.95)
-+     parser.add_argument(&#39;--clip_range&#39;, type=float, default=0.2)
-+     parser.add_argument(&#39;--ent_coef&#39;, type=float, default=0.01, help=&#39;Entropy coefficient&#39;)
-+     parser.add_argument(&#39;--vf_coef&#39;, type=float, default=0.5, help=&#39;Value function coefficient&#39;)
-+     parser.add_argument(&#39;--max_grad_norm&#39;, type=float, default=0.5)
++     parser.add_argument('--batch_size', type=int, default=16, help='Number of episodes per PPO update')
++     parser.add_argument('--n_epochs', type=int, default=4, help='Number of epochs to update the policy on the collected data')
++     parser.add_argument('--gamma', type=float, default=0.99)
++     parser.add_argument('--gae_lambda', type=float, default=0.95)
++     parser.add_argument('--clip_range', type=float, default=0.2)
++     parser.add_argument('--ent_coef', type=float, default=0.01, help='Entropy coefficient')
++     parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function coefficient')
++     parser.add_argument('--max_grad_norm', type=float, default=0.5)
 +     
 +     # --- Environment and Reward ---
-+     parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])
++     parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])
 +     
 +     # --- Training and Logging ---
-+     parser.add_argument(&#39;--eval_interval&#39;, type=int, default=5000, help=&#39;Evaluate the agent every N steps&#39;)
-+     parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=100)
-+     parser.add_argument(&#39;--use_wandb&#39;, action=&#39;store_true&#39;, default=True, help=&#39;Use Weights &amp; Biases for logging&#39;)
-+     parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;ppo_svgnest&#39;)
-+     parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=f&#39;ppo_run_{time.strftime(&quot;%Y%m%d-%H%M%S&quot;)}&#39;)
++     parser.add_argument('--eval_interval', type=int, default=5000, help='Evaluate the agent every N steps')
++     parser.add_argument('--max_test_instances', type=int, default=100)
++     parser.add_argument('--use_wandb', action='store_true', default=True, help='Use Weights &amp; Biases for logging')
++     parser.add_argument('--wandb_project', type=str, default='ppo_svgnest')
++     parser.add_argument('--wandb_run_name', type=str, default=f'ppo_run_{time.strftime("%Y%m%d-%H%M%S")}')
 +     
 +     return parser.parse_args()
 + 
@@ -2171,20 +2171,20 @@ Lines added: 417, lines removed: 501
 +     # --- Setup Logging ---
 +     os.makedirs(args.log_dir, exist_ok=True)
 +     
-+     file_handler = logging.FileHandler(os.path.join(args.log_dir, &#39;train_ppo.log&#39;))
++     file_handler = logging.FileHandler(os.path.join(args.log_dir, 'train_ppo.log'))
 +     file_handler.setLevel(logging.DEBUG)
-+     file_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;))
++     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 +     
 +     console_handler = logging.StreamHandler(sys.stdout)
 +     console_handler.setLevel(logging.INFO)
-+     console_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(levelname)s - %(message)s&#39;))
++     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 +     
 +     logging.basicConfig(
 +         level=logging.DEBUG,
 +         handlers=[file_handler, console_handler]
 +     )
 +     
-+     logger.info(f&quot;Training arguments: {args}&quot;)
++     logger.info(f"Training arguments: {args}")
 +     
 +     # --- Setup W&amp;B ---
 +     if args.use_wandb and WANDB_AVAILABLE:
@@ -2201,7 +2201,7 @@ Lines added: 417, lines removed: 501
 +     if args.use_wandb and WANDB_AVAILABLE:
 +         wandb.finish()
 + 
-+ if __name__ == &#39;__main__&#39;:
++ if __name__ == '__main__':
 +     main()
 + 
 ```
@@ -2279,7 +2279,7 @@ The primary issue now is the "Categorical" undefined error. I've realized I fail
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/ppo_trainer.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/ppo_trainer.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: undefined
@@ -2687,7 +2687,7 @@ I've moved on to examining the remaining files. Both `src/reward/td_reward_calcu
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/ppo_trainer.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/ppo_trainer.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: 1
@@ -2696,8 +2696,8 @@ Lines added: 1, lines removed: 1
 @@ -12,5 +12,5 @@
   
   # 添加项目根目录到Python路径
-- sys.path.append(os.path.join(os.path.dirname(__file__), &#39;..&#39;))
-+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;..&#39;))
+- sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
++ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
   
   # --- 导入项目模块 ---
 ```
@@ -2710,7 +2710,7 @@ Lines added: 1, lines removed: 1
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/reward/td_reward_calculator.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/reward/td_reward_calculator.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: 1
@@ -2719,8 +2719,8 @@ Lines added: 1, lines removed: 1
 @@ -6,5 +6,5 @@
   
   # 添加项目根目录到Python路径
-- sys.path.append(os.path.join(os.path.dirname(__file__), &#39;../..&#39;))
-+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;../..&#39;))
+- sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
++ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
   
   from utils.geometry_util import GeometryUtil
 ```
@@ -2733,7 +2733,7 @@ Lines added: 1, lines removed: 1
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/environment/td_environment.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/environment/td_environment.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: 1
@@ -2742,8 +2742,8 @@ Lines added: 1, lines removed: 1
 @@ -9,5 +9,5 @@
   
   # 添加项目根目录到Python路径
-- sys.path.append(os.path.join(os.path.dirname(__file__), &#39;../..&#39;))
-+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;../..&#39;))
+- sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
++ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
   
   from src.reward.td_reward_calculator import TDRewardCalculator
 ```
@@ -2756,7 +2756,7 @@ Lines added: 1, lines removed: 1
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: utils/__init__.py</summary>
+<details><summary>Tool use: **write** • Edit file: utils/__init__.py</summary>
 
 </details>
 
@@ -2984,7 +2984,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/model/ppo_actor_critic.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/model/ppo_actor_critic.py</summary>
 
 **Chunk 1**
 Lines added: 1, lines removed: 1
@@ -2993,7 +2993,7 @@ Lines added: 1, lines removed: 1
 @@ -93,5 +93,5 @@
           # 应用已选择零件的mask (防止重复选择)
           if selected_mask is not None:
--             logits.masked_fill_(selected_mask, float(&#39;-inf&#39;))
+-             logits.masked_fill_(selected_mask, float('-inf'))
 +             logits.masked_fill_(selected_mask, -1e8)
   
           # --- 应用 padding mask (防止选择不存在的零件) ---
@@ -3006,7 +3006,7 @@ Lines added: 1, lines removed: 1
 @@ -101,5 +101,5 @@
               # 广播 valid_lengths 来创建mask
               padding_mask = range_tensor &gt;= valid_lengths.unsqueeze(1)
--             logits.masked_fill_(padding_mask, float(&#39;-inf&#39;))
+-             logits.masked_fill_(padding_mask, float('-inf'))
 +             logits.masked_fill_(padding_mask, -1e8)
           # --------------------------------
   
@@ -3028,7 +3028,7 @@ Lines added: 1, lines removed: 1
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/model/ppo_actor_critic.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: src/model/ppo_actor_critic.py</summary>
 
 **Chunk 1**
 Lines added: 4, lines removed: undefined
@@ -3168,14 +3168,14 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: src/model/ppo_actor_critic.py</summary>
+<details><summary>Tool use: **write** • Edit file: src/model/ppo_actor_critic.py</summary>
 
 **Chunk 1**
 Lines added: undefined, lines removed: 12
 
 ```diff
 @@ -66,16 +66,4 @@
-          &quot;&quot;&quot;
+          """
           执行一步前向传播。
 - 
 -         Args:
@@ -3189,7 +3189,7 @@ Lines added: undefined, lines removed: 12
 -             logits: 指向每个零件的分数 [batch_size, seq_len]
 -             value: 当前状态的价值 [batch_size, 1]
 -             decoder_hidden: 更新后的LSTM隐藏状态
-          &quot;&quot;&quot;
+          """
           # --- Actor ---
 ```
 
@@ -3198,7 +3198,7 @@ Lines added: undefined, lines removed: 11
 
 ```diff
 @@ -121,15 +109,4 @@
-          &quot;&quot;&quot;
+          """
           核心修复：基于完整序列的评估。
 -         在Update阶段，我们需要重新计算整个序列的概率，以保证Mask和Hidden State的正确性。
 -         
@@ -3211,7 +3211,7 @@ Lines added: undefined, lines removed: 11
 -             new_log_probs: [batch_size, max_seq_len]
 -             new_values: [batch_size, max_seq_len]
 -             entropy: [batch_size, max_seq_len]
-          &quot;&quot;&quot;
+          """
           batch_size, max_seq_len, _ = parts.shape
 ```
 
@@ -3441,7 +3441,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 ---
 
 <tool-use data-tool-type="shell" data-tool-name="run_terminal_cmd">
-<details><summary>Tool use: **command** • Run command: tail -n 50 logs_ppo/train_ppo.log</summary>
+<details><summary>Tool use: **run_terminal_cmd** • Run command: tail -n 50 logs_ppo/train_ppo.log</summary>
 
 ```bash
 tail -n 50 logs_ppo/train_ppo.log
@@ -3464,7 +3464,7 @@ tail : �޷�����tail����ʶ��Ϊ cmdlet�������
 ---
 
 <tool-use data-tool-type="shell" data-tool-name="run_terminal_cmd">
-<details><summary>Tool use: **command** • Run command: Get-Content logs_ppo/train_ppo.log -Tail 50</summary>
+<details><summary>Tool use: **run_terminal_cmd** • Run command: Get-Content logs_ppo/train_ppo.log -Tail 50</summary>
 
 ```bash
 Get-Content logs_ppo/train_ppo.log -Tail 50
@@ -3472,55 +3472,55 @@ Get-Content logs_ppo/train_ppo.log -Tail 50
 
 ```
 2025-11-20 21:46:51,183 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,183 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,183 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,230 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 27 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,234 - utils.placement_worker - DEBUG - ��ʼ�����: 28 ����Ч·���������=188942.0
 2025-11-20 21:46:51,234 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,234 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,234 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,284 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 28 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,287 - utils.placement_worker - DEBUG - ��ʼ�����: 29 ����Ч·���������=192982.0
 2025-11-20 21:46:51,287 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,287 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,287 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,341 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 29 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,345 - utils.placement_worker - DEBUG - ��ʼ�����: 30 ����Ч·���������=193780.0
 2025-11-20 21:46:51,345 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,345 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,345 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,406 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 30 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,410 - utils.placement_worker - DEBUG - ��ʼ�����: 31 ����Ч·���������=196770.0
 2025-11-20 21:46:51,410 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,410 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,410 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,481 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 31 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,485 - utils.placement_worker - DEBUG - ��ʼ�����: 32 ����Ч·���������=204345.0
 2025-11-20 21:46:51,485 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,486 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,486 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,556 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 32 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,560 - utils.placement_worker - DEBUG - ��ʼ�����: 33 ����Ч·���������=211977.0
 2025-11-20 21:46:51,561 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,561 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,561 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,635 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 33 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,640 - utils.placement_worker - DEBUG - ��ʼ�����: 34 ����Ч·���������=218418.0
 2025-11-20 21:46:51,640 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,640 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,640 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,718 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 34 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,723 - utils.placement_worker - DEBUG - ��ʼ�����: 35 ����Ч·���������=221800.0
 2025-11-20 21:46:51,724 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,724 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,724 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,807 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 35 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,811 - utils.placement_worker - DEBUG - ��ʼ�����: 36 ����Ч·���������=224662.0
 2025-11-20 21:46:51,811 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,812 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,812 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:51,905 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 36 ��·����δ���� 0 ��·��
 2025-11-20 21:46:51,911 - utils.placement_worker - DEBUG - ��ʼ�����: 37 ����Ч·���������=230434.0
 2025-11-20 21:46:51,911 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:51,911 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:51,911 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:52,008 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 37 ��·����δ���� 0 ��·��
 2025-11-20 21:46:52,013 - utils.placement_worker - DEBUG - ��ʼ�����: 38 ����Ч·���������=231886.0
 2025-11-20 21:46:52,013 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:52,013 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:52,013 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 2025-11-20 21:46:52,122 - utils.placement_worker - DEBUG - place_paths: ��ɣ����� 38 ��·����δ���� 0 ��·��
 2025-11-20 21:46:52,127 - utils.placement_worker - DEBUG - ��ʼ�����: 39 ����Ч·���������=242378.0
 2025-11-20 21:46:52,127 - utils.placement_worker - DEBUG - place_paths: ��ʼ����·��...
-2025-11-20 21:46:52,127 - utils.placement_worker - DEBUG - place_paths: �����߽�: {&#39;x&#39;: 0, &#39;y&#39;: 0, &#39;width&#39;: 544, &#39;height&#39;: 810}
+2025-11-20 21:46:52,127 - utils.placement_worker - DEBUG - place_paths: �����߽�: {'x': 0, 'y': 0, 'width': 544, 'height': 810}
 
 ```
 </details>
@@ -3537,7 +3537,7 @@ Get-Content logs_ppo/train_ppo.log -Tail 50
 ---
 
 <tool-use data-tool-type="shell" data-tool-name="run_terminal_cmd">
-<details><summary>Tool use: **command** • Run command: Get-Content logs_ppo/train_ppo.log | Select-String "Ep " | Select-Object -Last 10</summary>
+<details><summary>Tool use: **run_terminal_cmd** • Run command: Get-Content logs_ppo/train_ppo.log | Select-String "Ep " | Select-Object -Last 10</summary>
 
 ```bash
 Get-Content logs_ppo/train_ppo.log | Select-String "Ep " | Select-Object -Last 10
@@ -3622,7 +3622,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="generic" data-tool-name="list_dir">
 <details>
-            <summary>Tool use: **list_directory** • Listed directory undefined • **0** results</summary>
+            <summary>Tool use: **list_dir** • Listed directory undefined • **0** results</summary>
         
 No results found
 </details>
@@ -3632,7 +3632,7 @@ No results found
 
 <tool-use data-tool-type="generic" data-tool-name="list_dir">
 <details>
-            <summary>Tool use: **list_directory** • Listed directory undefined • **0** results</summary>
+            <summary>Tool use: **list_dir** • Listed directory undefined • **0** results</summary>
         
 No results found
 </details>
@@ -3669,7 +3669,7 @@ No results found
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: test_ppo_single.py</summary>
+<details><summary>Tool use: **write** • Edit file: test_ppo_single.py</summary>
 
 **Chunk 1**
 Lines added: 135, lines removed: 1
@@ -3687,43 +3687,43 @@ Lines added: 135, lines removed: 1
 + from typing import Dict, List
 + 
 + # 添加项目根目录到Python路径
-+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;.&#39;))
++ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '.'))
 + 
 + from src.model.ppo_actor_critic import PPOActorCritic
 + from src.environment.td_environment import TDEnvironment, TDDataLoader
 + 
 + # 设置日志
-+ logging.basicConfig(level=logging.INFO, format=&#39;%(asctime)s - %(levelname)s - %(message)s&#39;)
++ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 + logger = logging.getLogger(__name__)
 + 
 + def evaluate_model(model_path: str, test_file: str, max_seq_len: int, num_instances: int = 100):
-+     &quot;&quot;&quot;加载模型并在测试集上评估&quot;&quot;&quot;
++     """加载模型并在测试集上评估"""
 +     
-+     device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)
-+     logger.info(f&quot;Using device: {device}&quot;)
++     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++     logger.info(f"Using device: {device}")
 + 
 +     # 1. 加载模型
 +     if not os.path.exists(model_path):
-+         logger.error(f&quot;Model file not found: {model_path}&quot;)
++         logger.error(f"Model file not found: {model_path}")
 +         return
 + 
-+     logger.info(f&quot;Loading model from {model_path}...&quot;)
++     logger.info(f"Loading model from {model_path}...")
 +     checkpoint = torch.load(model_path, map_location=device)
 +     
 +     # 获取模型参数 (尝试从 checkpoint 中获取，否则使用默认值)
-+     args = checkpoint.get(&#39;args&#39;)
-+     input_dim = getattr(args, &#39;input_dim&#39;, 2)
-+     hidden_dim = getattr(args, &#39;hidden_dim&#39;, 128)
++     args = checkpoint.get('args')
++     input_dim = getattr(args, 'input_dim', 2)
++     hidden_dim = getattr(args, 'hidden_dim', 128)
 +     
 +     # 初始化模型结构
 +     policy = PPOActorCritic(input_dim, hidden_dim, max_seq_len).to(device)
-+     policy.load_state_dict(checkpoint[&#39;model_state_dict&#39;])
++     policy.load_state_dict(checkpoint['model_state_dict'])
 +     policy.eval()
-+     logger.info(&quot;Model loaded successfully.&quot;)
++     logger.info("Model loaded successfully.")
 + 
 +     # 2. 加载数据和环境
 +     if not os.path.exists(test_file):
-+         logger.error(f&quot;Test data file not found: {test_file}&quot;)
++         logger.error(f"Test data file not found: {test_file}")
 +         return
 + 
 +     test_loader = TDDataLoader(test_file, test_file) # 这里为了简单，train_file 也传 test_file
@@ -3732,15 +3732,15 @@ Lines added: 135, lines removed: 1
 +     
 +     # 如果 test_loader 没有加载到数据，手动尝试加载
 +     if not test_loader.test_instances:
-+          logger.info(f&quot;Loading test instances directly from {test_file}&quot;)
-+          with open(test_file, &#39;r&#39;) as f:
++          logger.info(f"Loading test instances directly from {test_file}")
++          with open(test_file, 'r') as f:
 +             for line in f:
 +                 test_loader.test_instances.append(json.loads(line))
 + 
 +     env = TDEnvironment(max_parts=max_seq_len)
 +     
 +     num_instances = min(num_instances, len(test_loader.test_instances))
-+     logger.info(f&quot;Evaluating on {num_instances} instances...&quot;)
++     logger.info(f"Evaluating on {num_instances} instances...")
 + 
 +     total_util = 0.0
 +     results = []
@@ -3784,30 +3784,30 @@ Lines added: 135, lines removed: 1
 +                 selected_mask[action.item()] = True
 +         
 +         metrics = env.get_placement_metrics()
-+         util = metrics.get(&#39;material_utilization&#39;, 0)
++         util = metrics.get('material_utilization', 0)
 +         total_util += util
 +         
 +         elapsed = time.time() - start_time
-+         logger.info(f&quot;Instance {i}: Util={util:.4f}, Time={elapsed:.2f}s&quot;)
++         logger.info(f"Instance {i}: Util={util:.4f}, Time={elapsed:.2f}s")
 +         
 +         results.append({
-+             &#39;instance_id&#39;: i,
-+             &#39;utilization&#39;: util,
-+             &#39;metrics&#39;: metrics
++             'instance_id': i,
++             'utilization': util,
++             'metrics': metrics
 +         })
 + 
 +     avg_util = total_util / num_instances
-+     logger.info(f&quot;\n{&#39;=&#39;*30}&quot;)
-+     logger.info(f&quot;Final Average Utilization: {avg_util:.4f}&quot;)
-+     logger.info(f&quot;{&#39;=&#39;*30}&quot;)
++     logger.info(f"\n{'='*30}")
++     logger.info(f"Final Average Utilization: {avg_util:.4f}")
++     logger.info(f"{'='*30}")
 + 
-+ if __name__ == &#39;__main__&#39;:
++ if __name__ == '__main__':
 +     import time
 +     parser = argparse.ArgumentParser()
-+     parser.add_argument(&#39;--model_path&#39;, type=str, default=&#39;models_ppo/ppo_policy_best.pth&#39;)
-+     parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)
-+     parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)
-+     parser.add_argument(&#39;--num_instances&#39;, type=int, default=50)
++     parser.add_argument('--model_path', type=str, default='models_ppo/ppo_policy_best.pth')
++     parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')
++     parser.add_argument('--max_seq_len', type=int, default=60)
++     parser.add_argument('--num_instances', type=int, default=50)
 +     
 +     args = parser.parse_args()
 +     evaluate_model(args.model_path, args.test_file, args.max_seq_len, args.num_instances)
@@ -3868,7 +3868,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="write" data-tool-name="write">
 
-<details><summary>Tool use: **code_edit** • Edit file: benchmark_comparison.py</summary>
+<details><summary>Tool use: **write** • Edit file: benchmark_comparison.py</summary>
 
 **Chunk 1**
 Lines added: 223, lines removed: 1
@@ -3890,7 +3890,7 @@ Lines added: 223, lines removed: 1
 + import pandas as pd
 + 
 + # 添加项目根目录到Python路径
-+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;.&#39;))
++ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '.'))
 + 
 + from src.model.ppo_actor_critic import PPOActorCritic
 + from src.environment.td_environment import TDEnvironment
@@ -3898,19 +3898,19 @@ Lines added: 223, lines removed: 1
 + from utils.geometry_util import GeometryUtil
 + 
 + # 设置日志
-+ logging.basicConfig(level=logging.INFO, format=&#39;%(message)s&#39;)
++ logging.basicConfig(level=logging.INFO, format='%(message)s')
 + logger = logging.getLogger(__name__)
 + 
 + def run_placement(bin_polygon, parts, placement_sequence):
-+     &quot;&quot;&quot;执行具体的放置计算，返回利用率&quot;&quot;&quot;
++     """执行具体的放置计算，返回利用率"""
 +     # 构建顺序
 +     ordered_parts = [parts[i] for i in placement_sequence]
 +     rotations = [0] * len(ordered_parts)
 +     
 +     config = {
-+         &#39;spacing&#39;: 0,
-+         &#39;clipperScale&#39;: 10000000,
-+         &#39;curveTolerance&#39;: 0
++         'spacing': 0,
++         'clipperScale': 10000000,
++         'curveTolerance': 0
 +     }
 +     
 +     try:
@@ -3932,13 +3932,13 @@ Lines added: 223, lines removed: 1
 +         return 0.0
 + 
 + def evaluate_random(env, instance, num_repeats=1):
-+     &quot;&quot;&quot;随机策略：随机打乱多次取最好&quot;&quot;&quot;
++     """随机策略：随机打乱多次取最好"""
 +     best_util = 0.0
 +     
 +     # 这里只跑一次随机，模拟纯随机基线
 +     # 如果想要 strong baseline，可以 num_repeats=10
 +     for _ in range(num_repeats):
-+         seq = list(range(len(instance[&#39;parts&#39;])))
++         seq = list(range(len(instance['parts'])))
 +         random.shuffle(seq)
 +         # 截断到 env.num_parts (如果 instance parts 更多)
 +         seq = seq[:env.num_parts]
@@ -3949,7 +3949,7 @@ Lines added: 223, lines removed: 1
 +     return best_util
 + 
 + def evaluate_heuristic(env, instance):
-+     &quot;&quot;&quot;启发式策略：按面积降序排列 (Area Descending)&quot;&quot;&quot;
++     """启发式策略：按面积降序排列 (Area Descending)"""
 +     # 计算每个零件面积
 +     areas = []
 +     for i, part in enumerate(env.parts):
@@ -3964,7 +3964,7 @@ Lines added: 223, lines removed: 1
 +     return util
 + 
 + def evaluate_ppo(env, policy, device, max_seq_len):
-+     &quot;&quot;&quot;PPO 模型策略&quot;&quot;&quot;
++     """PPO 模型策略"""
 +     state_np = env._get_state() # 获取当前状态 (只需零件尺寸特征)
 +     
 +     with torch.no_grad():
@@ -3999,47 +3999,47 @@ Lines added: 223, lines removed: 1
 + 
 + def main():
 +     parser = argparse.ArgumentParser()
-+     parser.add_argument(&#39;--model_path&#39;, type=str, default=&#39;models_ppo/ppo_policy_best.pth&#39;)
-+     parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)
-+     parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)
-+     parser.add_argument(&#39;--limit&#39;, type=int, default=100, help=&#39;Number of instances to test (0 for all)&#39;)
++     parser.add_argument('--model_path', type=str, default='models_ppo/ppo_policy_best.pth')
++     parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')
++     parser.add_argument('--max_seq_len', type=int, default=60)
++     parser.add_argument('--limit', type=int, default=100, help='Number of instances to test (0 for all)')
 +     args = parser.parse_args()
 + 
-+     print(f&quot;Loading PPO model from {args.model_path}...&quot;)
-+     device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)
++     print(f"Loading PPO model from {args.model_path}...")
++     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 +     
 +     # 加载 PPO 模型
 +     if os.path.exists(args.model_path):
 +         checkpoint = torch.load(args.model_path, map_location=device)
-+         model_args = checkpoint.get(&#39;args&#39;)
-+         input_dim = getattr(model_args, &#39;input_dim&#39;, 2)
-+         hidden_dim = getattr(model_args, &#39;hidden_dim&#39;, 128)
++         model_args = checkpoint.get('args')
++         input_dim = getattr(model_args, 'input_dim', 2)
++         hidden_dim = getattr(model_args, 'hidden_dim', 128)
 +         policy = PPOActorCritic(input_dim, hidden_dim, args.max_seq_len).to(device)
-+         policy.load_state_dict(checkpoint[&#39;model_state_dict&#39;])
++         policy.load_state_dict(checkpoint['model_state_dict'])
 +         policy.eval()
 +     else:
-+         print(&quot;Error: Model path not found!&quot;)
++         print("Error: Model path not found!")
 +         return
 + 
 +     # 加载测试数据
-+     print(f&quot;Loading test data from {args.test_file}...&quot;)
++     print(f"Loading test data from {args.test_file}...")
 +     instances = []
-+     with open(args.test_file, &#39;r&#39;) as f:
++     with open(args.test_file, 'r') as f:
 +         for line in f:
 +             instances.append(json.loads(line))
 +     
 +     if args.limit &gt; 0:
 +         instances = instances[:args.limit]
 +     
-+     print(f&quot;Starting comparison on {len(instances)} instances...&quot;)
-+     print(&quot;-&quot; * 60)
-+     print(f&quot;{&#39;ID&#39;:&lt;5} | {&#39;Random&#39;:&lt;10} | {&#39;AreaDesc&#39;:&lt;10} | {&#39;PPO&#39;:&lt;10} | {&#39;Best&#39;:&lt;10}&quot;)
-+     print(&quot;-&quot; * 60)
++     print(f"Starting comparison on {len(instances)} instances...")
++     print("-" * 60)
++     print(f"{'ID':&lt;5} | {'Random':&lt;10} | {'AreaDesc':&lt;10} | {'PPO':&lt;10} | {'Best':&lt;10}")
++     print("-" * 60)
 + 
 +     results = []
 +     env = TDEnvironment(max_parts=args.max_seq_len)
 + 
-+     for i, instance in enumerate(tqdm(instances, desc=&quot;Running Tests&quot;)):
++     for i, instance in enumerate(tqdm(instances, desc="Running Tests")):
 +         # 重置环境以加载实例
 +         env.reset(instance)
 +         
@@ -4053,50 +4053,50 @@ Lines added: 223, lines removed: 1
 +         util_ppo = evaluate_ppo(env, policy, device, args.max_seq_len)
 +         
 +         # 记录
-+         best_method = &quot;Random&quot;
++         best_method = "Random"
 +         max_val = util_random
 +         
 +         if util_heuristic &gt; max_val:
 +             max_val = util_heuristic
-+             best_method = &quot;AreaDesc&quot;
++             best_method = "AreaDesc"
 +         if util_ppo &gt; max_val:
 +             max_val = util_ppo
-+             best_method = &quot;PPO&quot;
++             best_method = "PPO"
 +             
 +         results.append({
-+             &#39;id&#39;: i,
-+             &#39;Random&#39;: util_random,
-+             &#39;AreaDesc&#39;: util_heuristic,
-+             &#39;PPO&#39;: util_ppo,
-+             &#39;Winner&#39;: best_method
++             'id': i,
++             'Random': util_random,
++             'AreaDesc': util_heuristic,
++             'PPO': util_ppo,
++             'Winner': best_method
 +         })
 +         
 +         # 实时打印前 10 个和每 50 个的结果
 +         if i &lt; 10 or (i+1) % 50 == 0:
 +             # 避免 tqdm 冲突，使用 tqdm.write
-+             tqdm.write(f&quot;{i:&lt;5} | {util_random:.4f}     | {util_heuristic:.4f}     | {util_ppo:.4f}     | {best_method}&quot;)
++             tqdm.write(f"{i:&lt;5} | {util_random:.4f}     | {util_heuristic:.4f}     | {util_ppo:.4f}     | {best_method}")
 + 
 +     # 汇总统计
 +     df = pd.DataFrame(results)
-+     print(&quot;\n&quot; + &quot;=&quot; * 40)
-+     print(&quot;Final Benchmark Results Summary&quot;)
-+     print(&quot;=&quot; * 40)
-+     print(df[[&#39;Random&#39;, &#39;AreaDesc&#39;, &#39;PPO&#39;]].describe().loc[[&#39;mean&#39;, &#39;std&#39;, &#39;min&#39;, &#39;max&#39;]])
++     print("\n" + "=" * 40)
++     print("Final Benchmark Results Summary")
++     print("=" * 40)
++     print(df[['Random', 'AreaDesc', 'PPO']].describe().loc[['mean', 'std', 'min', 'max']])
 +     
-+     print(&quot;\nWin Rates:&quot;)
-+     win_counts = df[&#39;Winner&#39;].value_counts()
-+     for method in [&#39;Random&#39;, &#39;AreaDesc&#39;, &#39;PPO&#39;]:
++     print("\nWin Rates:")
++     win_counts = df['Winner'].value_counts()
++     for method in ['Random', 'AreaDesc', 'PPO']:
 +         count = win_counts.get(method, 0)
-+         print(f&quot;{method}: {count}/{len(instances)} ({count/len(instances)*100:.1f}%)&quot;)
++         print(f"{method}: {count}/{len(instances)} ({count/len(instances)*100:.1f}%)")
 + 
 +     # 提升幅度分析
-+     ppo_improvement = (df[&#39;PPO&#39;] - df[&#39;Random&#39;]) / df[&#39;Random&#39;] * 100
-+     print(f&quot;\nAverage Improvement over Random: {ppo_improvement.mean():.2f}%&quot;)
++     ppo_improvement = (df['PPO'] - df['Random']) / df['Random'] * 100
++     print(f"\nAverage Improvement over Random: {ppo_improvement.mean():.2f}%")
 +     
-+     ppo_vs_heuristic = (df[&#39;PPO&#39;] - df[&#39;AreaDesc&#39;]) / df[&#39;AreaDesc&#39;] * 100
-+     print(f&quot;Average Improvement over AreaDesc: {ppo_vs_heuristic.mean():.2f}%&quot;)
++     ppo_vs_heuristic = (df['PPO'] - df['AreaDesc']) / df['AreaDesc'] * 100
++     print(f"Average Improvement over AreaDesc: {ppo_vs_heuristic.mean():.2f}%")
 + 
-+ if __name__ == &#39;__main__&#39;:
++ if __name__ == '__main__':
 +     main()
 + 
 ```
@@ -4283,7 +4283,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: benchmark_comparison.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: benchmark_comparison.py</summary>
 
 **Chunk 1**
 Lines added: 3, lines removed: 1
@@ -4363,7 +4363,7 @@ _**Agent (model gemini-3-pro, mode Agent)**_
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: benchmark_comparison.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: benchmark_comparison.py</summary>
 
 **Chunk 1**
 Lines added: 2, lines removed: 1
@@ -4375,8 +4375,8 @@ Lines added: 2, lines removed: 1
 -         checkpoint = torch.load(args.model_path, map_location=device)
 +         # PyTorch 2.6+ fix: weights_only=False needed for loading argparse.Namespace
 +         checkpoint = torch.load(args.model_path, map_location=device, weights_only=False)
-          model_args = checkpoint.get(&#39;args&#39;)
-          input_dim = getattr(model_args, &#39;input_dim&#39;, 2)
+          model_args = checkpoint.get('args')
+          input_dim = getattr(model_args, 'input_dim', 2)
 ```
 
 </details>
@@ -4395,7 +4395,7 @@ Lines added: 2, lines removed: 1
 
 <tool-use data-tool-type="write" data-tool-name="search_replace">
 
-<details><summary>Tool use: **code_edit** • Edit file: test_ppo_single.py</summary>
+<details><summary>Tool use: **search_replace** • Edit file: test_ppo_single.py</summary>
 
 **Chunk 1**
 Lines added: 2, lines removed: 1
@@ -4403,7 +4403,7 @@ Lines added: 2, lines removed: 1
 ```diff
 @@ -30,5 +30,6 @@
   
-      logger.info(f&quot;Loading model from {model_path}...&quot;)
+      logger.info(f"Loading model from {model_path}...")
 -     checkpoint = torch.load(model_path, map_location=device)
 +     # PyTorch 2.6+ fix: weights_only=False needed for loading argparse.Namespace
 +     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
@@ -4523,7 +4523,7 @@ I need to compare the last evaluation utility from logs with those numbers. Howe
 ---
 
 <tool-use data-tool-type="shell" data-tool-name="run_terminal_cmd">
-<details><summary>Tool use: **command** • Run command: Get-Content logs_ppo/train_ppo.log | Select-String "Eval Avg Util" | Select-Object -Last 5</summary>
+<details><summary>Tool use: **run_terminal_cmd** • Run command: Get-Content logs_ppo/train_ppo.log | Select-String "Eval Avg Util" | Select-Object -Last 5</summary>
 
 ```bash
 Get-Content logs_ppo/train_ppo.log | Select-String "Eval Avg Util" | Select-Object -Last 5
@@ -4574,70 +4574,70 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/reward/td_reward_calculator.py&quot;
+  "relativeWorkspacePath": "src/reward/td_reward_calculator.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;070d4219-fdcc-40ef-b870-612b4d3d2dfc&quot;
+  "codeblockId": "070d4219-fdcc-40ef-b870-612b4d3d2dfc"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;      \&quot;\&quot;\&quot;时序差分奖励计算器 - 实现三维奖励函数\&quot;\&quot;\&quot;\n      \n-     def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0):\n+     def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0, rule_weight: float = 0.1):\n          \&quot;\&quot;\&quot;\n          初始化奖励计算器&quot;,
-        &quot;oldStart&quot;: 15,
-        &quot;newStart&quot;: 15,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 5,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 1
+        "diffString": "      \"\"\"时序差分奖励计算器 - 实现三维奖励函数\"\"\"\n      \n-     def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0):\n+     def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0, rule_weight: float = 0.1):\n          \"\"\"\n          初始化奖励计算器",
+        "oldStart": 15,
+        "newStart": 15,
+        "oldLines": 5,
+        "newLines": 5,
+        "linesRemoved": 1,
+        "linesAdded": 1
       },
       {
-        &quot;diffString&quot;: &quot;          \n          self.spacing = spacing\n+         # 规则强化权重：鼓励接近面积降序（Area Desc）顺序的排样\n+         # 取值越大，对规则的依赖越强；建议在 0.0~0.2 之间\n+         self.rule_weight = rule_weight\n          self.fitting_threshold = 0.25  # 贴合度阈值25%\n          &quot;,
-        &quot;oldStart&quot;: 32,
-        &quot;newStart&quot;: 32,
-        &quot;oldLines&quot;: 4,
-        &quot;newLines&quot;: 7,
-        &quot;linesAdded&quot;: 3
+        "diffString": "          \n          self.spacing = spacing\n+         # 规则强化权重：鼓励接近面积降序（Area Desc）顺序的排样\n+         # 取值越大，对规则的依赖越强；建议在 0.0~0.2 之间\n+         self.rule_weight = rule_weight\n          self.fitting_threshold = 0.25  # 贴合度阈值25%\n          ",
+        "oldStart": 32,
+        "newStart": 32,
+        "oldLines": 4,
+        "newLines": 7,
+        "linesAdded": 3
       },
       {
-        &quot;diffString&quot;: &quot;          r_fitting = self._calculate_fitting_reward(placed[-1] if placed else None, placed[:-1] if len(placed) &gt; 1 else [], bin_polygon, current_step)\n          r_utilization = self._calculate_utilization_reward(current_layout_info, previous_layout_info)\n+         # 规则奖励：鼓励序列接近面积降序\n+         r_rule = self._calculate_area_rule_reward(parts, placement_sequence, current_step)\n          \n          # 加权合成最终奖励\n-         total_reward = self.w1 * r_compactness + self.w2 * r_fitting + self.w3 * r_utilization\n+         total_reward = (\n+             self.w1 * r_compactness\n+             + self.w2 * r_fitting\n+             + self.w3 * r_utilization\n+             + self.rule_weight * r_rule\n+         )\n          \n          # 记录详细信息&quot;,
-        &quot;oldStart&quot;: 84,
-        &quot;newStart&quot;: 87,
-        &quot;oldLines&quot;: 7,
-        &quot;newLines&quot;: 14,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 8
+        "diffString": "          r_fitting = self._calculate_fitting_reward(placed[-1] if placed else None, placed[:-1] if len(placed) &gt; 1 else [], bin_polygon, current_step)\n          r_utilization = self._calculate_utilization_reward(current_layout_info, previous_layout_info)\n+         # 规则奖励：鼓励序列接近面积降序\n+         r_rule = self._calculate_area_rule_reward(parts, placement_sequence, current_step)\n          \n          # 加权合成最终奖励\n-         total_reward = self.w1 * r_compactness + self.w2 * r_fitting + self.w3 * r_utilization\n+         total_reward = (\n+             self.w1 * r_compactness\n+             + self.w2 * r_fitting\n+             + self.w3 * r_utilization\n+             + self.rule_weight * r_rule\n+         )\n          \n          # 记录详细信息",
+        "oldStart": 84,
+        "newStart": 87,
+        "oldLines": 7,
+        "newLines": 14,
+        "linesRemoved": 1,
+        "linesAdded": 8
       },
       {
-        &quot;diffString&quot;: &quot;              &#39;fitting_reward&#39;: r_fitting,\n              &#39;utilization_reward&#39;: r_utilization,\n+             &#39;area_rule_reward&#39;: r_rule,\n              &#39;layout_info&#39;: current_layout_info\n          }&quot;,
-        &quot;oldStart&quot;: 94,
-        &quot;newStart&quot;: 104,
-        &quot;oldLines&quot;: 4,
-        &quot;newLines&quot;: 5,
-        &quot;linesAdded&quot;: 1
+        "diffString": "              'fitting_reward': r_fitting,\n              'utilization_reward': r_utilization,\n+             'area_rule_reward': r_rule,\n              'layout_info': current_layout_info\n          }",
+        "oldStart": 94,
+        "newStart": 104,
+        "oldLines": 4,
+        "newLines": 5,
+        "linesAdded": 1
       },
       {
-        &quot;diffString&quot;: &quot;              return -delta_waste / previous_waste if previous_waste &gt; 0 else -0.5\n  \n+     def _calculate_area_rule_reward(\n+         self,\n+         parts: List,\n+         placement_sequence: List[int],\n+         current_step: int\n+     ) -&gt; float:\n+         \&quot;\&quot;\&quot;\n+         规则奖励：鼓励当前选择的零件接近“面积降序”顺序。\n+         - 先根据零件实际几何面积计算一个面积降序序列\n+         - 如果当前选择的零件在该序列中越靠前，得到的奖励越高（0~1）\n+         \&quot;\&quot;\&quot;\n+         if self.rule_weight &lt;= 0:\n+             return 0.0\n+         if current_step &lt; 0 or current_step &gt;= len(placement_sequence):\n+             return 0.0\n+         try:\n+             # 计算每个零件的面积\n+             areas = [abs(GeometryUtil.polygon_area(p)) for p in parts]\n+             if not areas:\n+                 return 0.0\n+             # 按面积降序排序，得到 rank\n+             order = sorted(range(len(areas)), key=lambda i: areas[i], reverse=True)\n+             rank = {idx: r for r, idx in enumerate(order)}\n+             current_idx = placement_sequence[current_step]\n+             if current_idx not in rank:\n+                 return 0.0\n+             area_rank = rank[current_idx]  # 0 表示面积最大\n+             denom = max(1, len(areas) - 1)\n+             # 归一化到 0~1，越大越好\n+             norm_rank = 1.0 - area_rank / denom\n+             return float(norm_rank)\n+         except Exception:\n+             # 出现任何异常时，不提供规则奖励，避免影响训练稳定性\n+             return 0.0\n+ \n      def _calculate_perimeter(self, part) -&gt; float:\n          \&quot;\&quot;\&quot;计算零件周长\&quot;\&quot;\&quot;&quot;,
-        &quot;oldStart&quot;: 185,
-        &quot;newStart&quot;: 196,
-        &quot;oldLines&quot;: 4,
-        &quot;newLines&quot;: 39,
-        &quot;linesAdded&quot;: 35
+        "diffString": "              return -delta_waste / previous_waste if previous_waste &gt; 0 else -0.5\n  \n+     def _calculate_area_rule_reward(\n+         self,\n+         parts: List,\n+         placement_sequence: List[int],\n+         current_step: int\n+     ) -&gt; float:\n+         \"\"\"\n+         规则奖励：鼓励当前选择的零件接近“面积降序”顺序。\n+         - 先根据零件实际几何面积计算一个面积降序序列\n+         - 如果当前选择的零件在该序列中越靠前，得到的奖励越高（0~1）\n+         \"\"\"\n+         if self.rule_weight &lt;= 0:\n+             return 0.0\n+         if current_step &lt; 0 or current_step &gt;= len(placement_sequence):\n+             return 0.0\n+         try:\n+             # 计算每个零件的面积\n+             areas = [abs(GeometryUtil.polygon_area(p)) for p in parts]\n+             if not areas:\n+                 return 0.0\n+             # 按面积降序排序，得到 rank\n+             order = sorted(range(len(areas)), key=lambda i: areas[i], reverse=True)\n+             rank = {idx: r for r, idx in enumerate(order)}\n+             current_idx = placement_sequence[current_step]\n+             if current_idx not in rank:\n+                 return 0.0\n+             area_rank = rank[current_idx]  # 0 表示面积最大\n+             denom = max(1, len(areas) - 1)\n+             # 归一化到 0~1，越大越好\n+             norm_rank = 1.0 - area_rank / denom\n+             return float(norm_rank)\n+         except Exception:\n+             # 出现任何异常时，不提供规则奖励，避免影响训练稳定性\n+             return 0.0\n+ \n      def _calculate_perimeter(self, part) -&gt; float:\n          \"\"\"计算零件周长\"\"\"",
+        "oldStart": 185,
+        "newStart": 196,
+        "oldLines": 4,
+        "newLines": 39,
+        "linesAdded": 35
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/reward/td_reward_calculator.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import numpy as np\nimport torch\nimport sys\nimport os\nfrom typing import List, Dict, Tuple, Optional\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;../..&#39;))\n\nfrom utils.geometry_util import GeometryUtil\nfrom utils.placement_worker import PlacementWorker\n\n\nclass TDRewardCalculator:\n    \&quot;\&quot;\&quot;时序差分奖励计算器 - 实现三维奖励函数\&quot;\&quot;\&quot;\n    \n    def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0, rule_weight: float = 0.1):\n        \&quot;\&quot;\&quot;\n        初始化奖励计算器\n        \n        Args:\n            w1: 紧凑度奖励权重\n            w2: 贴合度奖励权重  \n            w3: 材料利用率奖励权重\n            spacing: 零件间距\n        \&quot;\&quot;\&quot;\n        # 权重归一化\n        total_weight = w1 + w2 + w3\n        self.w1 = w1 / total_weight  # 紧凑度权重\n        self.w2 = w2 / total_weight  # 贴合度权重\n        self.w3 = w3 / total_weight  # 材料利用率权重\n        \n        self.spacing = spacing\n        # 规则强化权重：鼓励接近面积降序（Area Desc）顺序的排样\n        # 取值越大，对规则的依赖越强；建议在 0.0~0.2 之间\n        self.rule_weight = rule_weight\n        self.fitting_threshold = 0.25  # 贴合度阈值25%\n        \n        # PlacementWorker配置\n        self.config = {\n            &#39;spacing&#39;: spacing,\n            &#39;clipperScale&#39;: 10000000,\n            &#39;curveTolerance&#39;: 0\n        }\n\n    def calculate_step_reward(self, \n                            bin_polygon: List[Dict], \n                            parts: List, \n                            placement_sequence: List[int], \n                            current_step: int,\n                            previous_layout_info: Optional[Dict] = None) -&gt; Tuple[float, Dict]:\n        \&quot;\&quot;\&quot;\n        计算当前步骤的即时奖励\n        \n        Args:\n            bin_polygon: 容器多边形\n            parts: 零件列表\n            placement_sequence: 当前的放置序列\n            current_step: 当前步骤（0-based）\n            previous_layout_info: 上一步的布局信息（用于计算增量）\n            \n        Returns:\n            reward: 当前步骤的奖励值\n            layout_info: 当前布局信息（用于下一步计算）\n        \&quot;\&quot;\&quot;\n        # 获取当前要放置的零件序列\n        current_sequence = placement_sequence[:current_step + 1]\n        current_parts = [parts[i] for i in current_sequence]\n        rotations = [0] * len(current_parts)  # 简化：不考虑旋转\n        \n        # 使用PlacementWorker进行实际排版\n        worker = PlacementWorker(\n            bin_polygon=bin_polygon,\n            paths=current_parts,\n            ids=current_sequence,\n            rotations=rotations,\n            config=self.config\n        )\n        \n        placed, unplaced, bounding_box_area = worker.place_paths()\n        \n        # 计算当前布局信息\n        current_layout_info = self._calculate_layout_info(placed, bounding_box_area, bin_polygon)\n        \n        # 计算三维奖励\n        r_compactness = self._calculate_compactness_reward(current_layout_info)\n        r_fitting = self._calculate_fitting_reward(placed[-1] if placed else None, placed[:-1] if len(placed) &gt; 1 else [], bin_polygon, current_step)\n        r_utilization = self._calculate_utilization_reward(current_layout_info, previous_layout_info)\n        # 规则奖励：鼓励序列接近面积降序\n        r_rule = self._calculate_area_rule_reward(parts, placement_sequence, current_step)\n        \n        # 加权合成最终奖励\n        total_reward = (\n            self.w1 * r_compactness\n            + self.w2 * r_fitting\n            + self.w3 * r_utilization\n            + self.rule_weight * r_rule\n        )\n        \n        # 记录详细信息\n        reward_details = {\n            &#39;total_reward&#39;: total_reward,\n            &#39;compactness_reward&#39;: r_compactness,\n            &#39;fitting_reward&#39;: r_fitting,\n            &#39;utilization_reward&#39;: r_utilization,\n            &#39;area_rule_reward&#39;: r_rule,\n            &#39;layout_info&#39;: current_layout_info\n        }\n        \n        return total_reward, reward_details\n\n    def _calculate_layout_info(self, placed_parts: List, bounding_box_area: float, bin_polygon: List[Dict]) -&gt; Dict:\n        \&quot;\&quot;\&quot;计算布局信息\&quot;\&quot;\&quot;\n        # 计算已放置零件的总面积\n        total_parts_area = sum(abs(GeometryUtil.polygon_area(part)) for part in placed_parts)\n        \n        # 计算容器面积\n        bin_area = abs(GeometryUtil.polygon_area(bin_polygon))\n        \n        # 计算材料利用率\n        material_utilization = total_parts_area / bounding_box_area if bounding_box_area &gt; 0 else 0\n        \n        # 计算边界框占容器比例\n        bbox_ratio = bounding_box_area / bin_area if bin_area &gt; 0 else 1.0\n        \n        # 计算废料面积\n        waste_area = bounding_box_area - total_parts_area if bounding_box_area &gt; total_parts_area else 0\n        \n        return {\n            &#39;total_parts_area&#39;: total_parts_area,\n            &#39;bounding_box_area&#39;: bounding_box_area,\n            &#39;bin_area&#39;: bin_area,\n            &#39;material_utilization&#39;: material_utilization,\n            &#39;bbox_ratio&#39;: bbox_ratio,\n            &#39;waste_area&#39;: waste_area,\n            &#39;num_placed_parts&#39;: len(placed_parts)\n        }\n\n    def _calculate_compactness_reward(self, layout_info: Dict) -&gt; float:\n        \&quot;\&quot;\&quot;\n        计算紧凑度奖励\n        R_compactness(t) = (∑ᵢ₌₁ⁿ Aᵢ) / BBox_area(t)\n        \&quot;\&quot;\&quot;\n        return layout_info[&#39;material_utilization&#39;]\n\n    def _calculate_fitting_reward(self, new_part, placed_parts: List, bin_polygon: List[Dict], current_step: int) -&gt; float:\n        \&quot;\&quot;\&quot;\n        计算贴合度奖励\n        当新零件与板材边缘及其他零件接触长度占其周长的比例超过25%时，\n        奖励值等于该比例；否则给予-1惩罚\n        \&quot;\&quot;\&quot;\n        if current_step == 0 or new_part is None:\n            return 0.0\n        \n        # 计算新零件的周长\n        perimeter = self._calculate_perimeter(new_part)\n        if perimeter &lt;= 0:\n            return -1.0\n        \n        # 计算与板材边缘的接触长度\n        contact_with_bin = self._calculate_contact_with_bin(new_part, bin_polygon)\n        \n        # 计算与其他已排样零件的接触长度\n        contact_with_parts = self._calculate_contact_with_parts(new_part, placed_parts)\n        \n        # 总接触长度\n        total_contact_length = contact_with_bin + contact_with_parts\n        \n        # 计算贴合比例\n        fitting_ratio = total_contact_length / perimeter\n        \n        # 根据阈值返回奖励\n        if fitting_ratio &gt; self.fitting_threshold:\n            return fitting_ratio\n        else:\n            return -1.0\n\n    def _calculate_utilization_reward(self, current_layout_info: Dict, previous_layout_info: Optional[Dict]) -&gt; float:\n        \&quot;\&quot;\&quot;\n        计算材料利用率奖励\n        R_utilization(t) = {\n            +1.0,  if ΔWaste ≤ 0 (废料面积减少或不变)\n            -ΔWaste/Waste_prev,  if ΔWaste &gt; 0 (废料面积增加)\n        }\n        \&quot;\&quot;\&quot;\n        if previous_layout_info is None:\n            return 0.5\n        \n        current_waste = current_layout_info[&#39;waste_area&#39;]\n        previous_waste = previous_layout_info[&#39;waste_area&#39;]\n        delta_waste = current_waste - previous_waste\n        \n        if delta_waste &lt;= 0:\n            return 1.0\n        else:\n            return -delta_waste / previous_waste if previous_waste &gt; 0 else -0.5\n\n    def _calculate_area_rule_reward(\n        self,\n        parts: List,\n        placement_sequence: List[int],\n        current_step: int\n    ) -&gt; float:\n        \&quot;\&quot;\&quot;\n        规则奖励：鼓励当前选择的零件接近“面积降序”顺序。\n        - 先根据零件实际几何面积计算一个面积降序序列\n        - 如果当前选择的零件在该序列中越靠前，得到的奖励越高（0~1）\n        \&quot;\&quot;\&quot;\n        if self.rule_weight &lt;= 0:\n            return 0.0\n        if current_step &lt; 0 or current_step &gt;= len(placement_sequence):\n            return 0.0\n        try:\n            # 计算每个零件的面积\n            areas = [abs(GeometryUtil.polygon_area(p)) for p in parts]\n            if not areas:\n                return 0.0\n            # 按面积降序排序，得到 rank\n            order = sorted(range(len(areas)), key=lambda i: areas[i], reverse=True)\n            rank = {idx: r for r, idx in enumerate(order)}\n            current_idx = placement_sequence[current_step]\n            if current_idx not in rank:\n                return 0.0\n            area_rank = rank[current_idx]  # 0 表示面积最大\n            denom = max(1, len(areas) - 1)\n            # 归一化到 0~1，越大越好\n            norm_rank = 1.0 - area_rank / denom\n            return float(norm_rank)\n        except Exception:\n            # 出现任何异常时，不提供规则奖励，避免影响训练稳定性\n            return 0.0\n\n    def _calculate_perimeter(self, part) -&gt; float:\n        \&quot;\&quot;\&quot;计算零件周长\&quot;\&quot;\&quot;\n        if not part or len(part) &lt; 3:\n            return 0.0\n        \n        perimeter = 0\n        for i in range(len(part)):\n            p1 = part[i]\n            p2 = part[(i + 1) % len(part)]\n            dx = p2[&#39;x&#39;] - p1[&#39;x&#39;]\n            dy = p2[&#39;y&#39;] - p1[&#39;y&#39;]\n            perimeter += (dx**2 + dy**2)**0.5\n        return perimeter\n\n    def _calculate_contact_with_bin(self, new_part, bin_polygon: List[Dict]) -&gt; float:\n        \&quot;\&quot;\&quot;计算新零件与板材边缘的接触长度\&quot;\&quot;\&quot;\n        if not new_part or not bin_polygon:\n            return 0.0\n        \n        contact_length = 0.0\n        tolerance = 1e-3  # 接触判断的容差\n        \n        # 遍历新零件的每条边\n        for i in range(len(new_part)):\n            part_edge_start = new_part[i]\n            part_edge_end = new_part[(i + 1) % len(new_part)]\n            \n            # 遍历板材的每条边\n            for j in range(len(bin_polygon)):\n                bin_edge_start = bin_polygon[j]\n                bin_edge_end = bin_polygon[(j + 1) % len(bin_polygon)]\n                \n                # 计算两条边的重叠长度\n                overlap = self._calculate_edge_overlap(part_edge_start, part_edge_end, \n                                                     bin_edge_start, bin_edge_end, tolerance)\n                contact_length += overlap\n        \n        return contact_length\n    \n    def _calculate_contact_with_parts(self, new_part, placed_parts: List) -&gt; float:\n        \&quot;\&quot;\&quot;计算新零件与其他已排样零件的接触长度\&quot;\&quot;\&quot;\n        if not new_part or not placed_parts:\n            return 0.0\n        \n        contact_length = 0.0\n        tolerance = 1e-3  # 接触判断的容差\n        \n        # 遍历新零件的每条边\n        for i in range(len(new_part)):\n            part_edge_start = new_part[i]\n            part_edge_end = new_part[(i + 1) % len(new_part)]\n            \n            # 遍历所有已放置零件\n            for placed_part in placed_parts:\n                if not placed_part:\n                    continue\n                \n                # 遍历已放置零件的每条边\n                for j in range(len(placed_part)):\n                    placed_edge_start = placed_part[j]\n                    placed_edge_end = placed_part[(j + 1) % len(placed_part)]\n                    \n                    # 计算两条边的重叠长度\n                    overlap = self._calculate_edge_overlap(part_edge_start, part_edge_end, \n                                                         placed_edge_start, placed_edge_end, tolerance)\n                    contact_length += overlap\n        \n        return contact_length\n    \n    def _calculate_edge_overlap(self, edge1_start: Dict, edge1_end: Dict, \n                               edge2_start: Dict, edge2_end: Dict, tolerance: float) -&gt; float:\n        \&quot;\&quot;\&quot;计算两条边的重叠长度\&quot;\&quot;\&quot;\n        # 简化实现：检查两条边是否平行且距离小于容差\n        # 计算边的向量\n        vec1 = {&#39;x&#39;: edge1_end[&#39;x&#39;] - edge1_start[&#39;x&#39;], &#39;y&#39;: edge1_end[&#39;y&#39;] - edge1_start[&#39;y&#39;]}\n        vec2 = {&#39;x&#39;: edge2_end[&#39;x&#39;] - edge2_start[&#39;x&#39;], &#39;y&#39;: edge2_end[&#39;y&#39;] - edge2_start[&#39;y&#39;]}\n        \n        # 计算边的长度\n        len1 = (vec1[&#39;x&#39;]**2 + vec1[&#39;y&#39;]**2)**0.5\n        len2 = (vec2[&#39;x&#39;]**2 + vec2[&#39;y&#39;]**2)**0.5\n        \n        if len1 &lt; tolerance or len2 &lt; tolerance:\n            return 0.0\n        \n        # 归一化向量\n        vec1_norm = {&#39;x&#39;: vec1[&#39;x&#39;] / len1, &#39;y&#39;: vec1[&#39;y&#39;] / len1}\n        vec2_norm = {&#39;x&#39;: vec2[&#39;x&#39;] / len2, &#39;y&#39;: vec2[&#39;y&#39;] / len2}\n        \n        # 检查是否平行\n        cross_product = abs(vec1_norm[&#39;x&#39;] * vec2_norm[&#39;y&#39;] - vec1_norm[&#39;y&#39;] * vec2_norm[&#39;x&#39;])\n        if cross_product &gt; tolerance:\n            return 0.0  # 不平行\n        \n        # 计算点到直线的距离\n        dist = self._point_to_line_distance(edge1_start, edge2_start, edge2_end)\n        if dist &gt; tolerance:\n            return 0.0  # 距离太远\n        \n        # 计算重叠长度（简化：使用投影方法）\n        # 将edge1的端点投影到edge2所在直线上\n        proj1 = self._project_point_on_line(edge1_start, edge2_start, edge2_end)\n        proj2 = self._project_point_on_line(edge1_end, edge2_start, edge2_end)\n        \n        # 计算重叠区间\n        overlap = self._calculate_line_segment_overlap(proj1, proj2, 0.0, len2)\n        \n        return max(0.0, overlap)\n    \n    def _point_to_line_distance(self, point: Dict, line_start: Dict, line_end: Dict) -&gt; float:\n        \&quot;\&quot;\&quot;计算点到直线的距离\&quot;\&quot;\&quot;\n        # 使用向量叉积计算点到直线的距离\n        dx = line_end[&#39;x&#39;] - line_start[&#39;x&#39;]\n        dy = line_end[&#39;y&#39;] - line_start[&#39;y&#39;]\n        \n        if dx == 0 and dy == 0:\n            return ((point[&#39;x&#39;] - line_start[&#39;x&#39;])**2 + (point[&#39;y&#39;] - line_start[&#39;y&#39;])**2)**0.5\n        \n        # 计算垂直距离\n        cross = abs((point[&#39;x&#39;] - line_start[&#39;x&#39;]) * dy - (point[&#39;y&#39;] - line_start[&#39;y&#39;]) * dx)\n        line_length = (dx**2 + dy**2)**0.5\n        \n        return cross / line_length\n    \n    def _project_point_on_line(self, point: Dict, line_start: Dict, line_end: Dict) -&gt; float:\n        \&quot;\&quot;\&quot;将点投影到直线上，返回投影点在直线上的参数位置\&quot;\&quot;\&quot;\n        dx = line_end[&#39;x&#39;] - line_start[&#39;x&#39;]\n        dy = line_end[&#39;y&#39;] - line_start[&#39;y&#39;]\n        \n        if dx == 0 and dy == 0:\n            return 0.0\n        \n        # 计算投影参数\n        t = ((point[&#39;x&#39;] - line_start[&#39;x&#39;]) * dx + (point[&#39;y&#39;] - line_start[&#39;y&#39;]) * dy) / (dx**2 + dy**2)\n        \n        # 将t转换为距离\n        line_length = (dx**2 + dy**2)**0.5\n        return t * line_length\n    \n    def _calculate_line_segment_overlap(self, proj1: float, proj2: float, \n                                       seg_start: float, seg_end: float) -&gt; float:\n        \&quot;\&quot;\&quot;计算两个线段的重叠长度\&quot;\&quot;\&quot;\n        # 确保proj1 &lt;= proj2\n        if proj1 &gt; proj2:\n            proj1, proj2 = proj2, proj1\n        \n        # 计算重叠区间\n        overlap_start = max(proj1, seg_start)\n        overlap_end = min(proj2, seg_end)\n        \n        return max(0.0, overlap_end - overlap_start)\n\n    def update_weights(self, w1: float, w2: float, w3: float):\n        \&quot;\&quot;\&quot;动态更新权重系数\&quot;\&quot;\&quot;\n        total_weight = w1 + w2 + w3\n        self.w1 = w1 / total_weight\n        self.w2 = w2 / total_weight\n        self.w3 = w3 / total_weight\n\n    def get_weights(self) -&gt; Tuple[float, float, float]:\n        \&quot;\&quot;\&quot;获取当前权重\&quot;\&quot;\&quot;\n        return self.w1, self.w2, self.w3\n\n    def calculate_final_reward(self, \n                             bin_polygon: List[Dict], \n                             parts: List, \n                             placement_sequence: List[int]) -&gt; Dict:\n        \&quot;\&quot;\&quot;\n        计算完整序列的最终奖励（用于评估）\n        \n        Args:\n            bin_polygon: 容器多边形\n            parts: 零件列表\n            placement_sequence: 完整的放置序列\n            \n        Returns:\n            final_metrics: 最终的评估指标\n        \&quot;\&quot;\&quot;\n        # 使用PlacementWorker进行完整排版\n        sequence_parts = [parts[i] for i in placement_sequence]\n        rotations = [0] * len(sequence_parts)\n        \n        worker = PlacementWorker(\n            bin_polygon=bin_polygon,\n            paths=sequence_parts,\n            ids=placement_sequence,\n            rotations=rotations,\n            config=self.config\n        )\n        \n        placed, unplaced, bounding_box_area = worker.place_paths()\n        \n        # 计算最终布局信息\n        final_layout_info = self._calculate_layout_info(placed, bounding_box_area, bin_polygon)\n        \n        # 计算各维度最终得分\n        final_compactness = self._calculate_compactness_reward(final_layout_info)\n        final_fitting = 1.0  # 完整序列的贴合度需要特殊计算\n        final_utilization = 1.0 if final_layout_info[&#39;waste_area&#39;] == 0 else final_layout_info[&#39;material_utilization&#39;]\n        \n        final_score = self.w1 * final_compactness + self.w2 * final_fitting + self.w3 * final_utilization\n        \n        return {\n            &#39;final_score&#39;: final_score,\n            &#39;material_utilization&#39;: final_layout_info[&#39;material_utilization&#39;],\n            &#39;compactness&#39;: final_compactness,\n            &#39;bbox_ratio&#39;: final_layout_info[&#39;bbox_ratio&#39;],\n            &#39;waste_area&#39;: final_layout_info[&#39;waste_area&#39;],\n            &#39;bounding_box_area&#39;: bounding_box_area,\n            &#39;total_parts_area&#39;: final_layout_info[&#39;total_parts_area&#39;],\n            &#39;num_placed_parts&#39;: len(placed),\n            &#39;num_unplaced_parts&#39;: len(unplaced)\n        } &quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/reward/td_reward_calculator.py",
+  "contentsAfterEdit": "import numpy as np\nimport torch\nimport sys\nimport os\nfrom typing import List, Dict, Tuple, Optional\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))\n\nfrom utils.geometry_util import GeometryUtil\nfrom utils.placement_worker import PlacementWorker\n\n\nclass TDRewardCalculator:\n    \"\"\"时序差分奖励计算器 - 实现三维奖励函数\"\"\"\n    \n    def __init__(self, w1=0.4, w2=0.3, w3=0.3, spacing=0, rule_weight: float = 0.1):\n        \"\"\"\n        初始化奖励计算器\n        \n        Args:\n            w1: 紧凑度奖励权重\n            w2: 贴合度奖励权重  \n            w3: 材料利用率奖励权重\n            spacing: 零件间距\n        \"\"\"\n        # 权重归一化\n        total_weight = w1 + w2 + w3\n        self.w1 = w1 / total_weight  # 紧凑度权重\n        self.w2 = w2 / total_weight  # 贴合度权重\n        self.w3 = w3 / total_weight  # 材料利用率权重\n        \n        self.spacing = spacing\n        # 规则强化权重：鼓励接近面积降序（Area Desc）顺序的排样\n        # 取值越大，对规则的依赖越强；建议在 0.0~0.2 之间\n        self.rule_weight = rule_weight\n        self.fitting_threshold = 0.25  # 贴合度阈值25%\n        \n        # PlacementWorker配置\n        self.config = {\n            'spacing': spacing,\n            'clipperScale': 10000000,\n            'curveTolerance': 0\n        }\n\n    def calculate_step_reward(self, \n                            bin_polygon: List[Dict], \n                            parts: List, \n                            placement_sequence: List[int], \n                            current_step: int,\n                            previous_layout_info: Optional[Dict] = None) -&gt; Tuple[float, Dict]:\n        \"\"\"\n        计算当前步骤的即时奖励\n        \n        Args:\n            bin_polygon: 容器多边形\n            parts: 零件列表\n            placement_sequence: 当前的放置序列\n            current_step: 当前步骤（0-based）\n            previous_layout_info: 上一步的布局信息（用于计算增量）\n            \n        Returns:\n            reward: 当前步骤的奖励值\n            layout_info: 当前布局信息（用于下一步计算）\n        \"\"\"\n        # 获取当前要放置的零件序列\n        current_sequence = placement_sequence[:current_step + 1]\n        current_parts = [parts[i] for i in current_sequence]\n        rotations = [0] * len(current_parts)  # 简化：不考虑旋转\n        \n        # 使用PlacementWorker进行实际排版\n        worker = PlacementWorker(\n            bin_polygon=bin_polygon,\n            paths=current_parts,\n            ids=current_sequence,\n            rotations=rotations,\n            config=self.config\n        )\n        \n        placed, unplaced, bounding_box_area = worker.place_paths()\n        \n        # 计算当前布局信息\n        current_layout_info = self._calculate_layout_info(placed, bounding_box_area, bin_polygon)\n        \n        # 计算三维奖励\n        r_compactness = self._calculate_compactness_reward(current_layout_info)\n        r_fitting = self._calculate_fitting_reward(placed[-1] if placed else None, placed[:-1] if len(placed) &gt; 1 else [], bin_polygon, current_step)\n        r_utilization = self._calculate_utilization_reward(current_layout_info, previous_layout_info)\n        # 规则奖励：鼓励序列接近面积降序\n        r_rule = self._calculate_area_rule_reward(parts, placement_sequence, current_step)\n        \n        # 加权合成最终奖励\n        total_reward = (\n            self.w1 * r_compactness\n            + self.w2 * r_fitting\n            + self.w3 * r_utilization\n            + self.rule_weight * r_rule\n        )\n        \n        # 记录详细信息\n        reward_details = {\n            'total_reward': total_reward,\n            'compactness_reward': r_compactness,\n            'fitting_reward': r_fitting,\n            'utilization_reward': r_utilization,\n            'area_rule_reward': r_rule,\n            'layout_info': current_layout_info\n        }\n        \n        return total_reward, reward_details\n\n    def _calculate_layout_info(self, placed_parts: List, bounding_box_area: float, bin_polygon: List[Dict]) -&gt; Dict:\n        \"\"\"计算布局信息\"\"\"\n        # 计算已放置零件的总面积\n        total_parts_area = sum(abs(GeometryUtil.polygon_area(part)) for part in placed_parts)\n        \n        # 计算容器面积\n        bin_area = abs(GeometryUtil.polygon_area(bin_polygon))\n        \n        # 计算材料利用率\n        material_utilization = total_parts_area / bounding_box_area if bounding_box_area &gt; 0 else 0\n        \n        # 计算边界框占容器比例\n        bbox_ratio = bounding_box_area / bin_area if bin_area &gt; 0 else 1.0\n        \n        # 计算废料面积\n        waste_area = bounding_box_area - total_parts_area if bounding_box_area &gt; total_parts_area else 0\n        \n        return {\n            'total_parts_area': total_parts_area,\n            'bounding_box_area': bounding_box_area,\n            'bin_area': bin_area,\n            'material_utilization': material_utilization,\n            'bbox_ratio': bbox_ratio,\n            'waste_area': waste_area,\n            'num_placed_parts': len(placed_parts)\n        }\n\n    def _calculate_compactness_reward(self, layout_info: Dict) -&gt; float:\n        \"\"\"\n        计算紧凑度奖励\n        R_compactness(t) = (∑ᵢ₌₁ⁿ Aᵢ) / BBox_area(t)\n        \"\"\"\n        return layout_info['material_utilization']\n\n    def _calculate_fitting_reward(self, new_part, placed_parts: List, bin_polygon: List[Dict], current_step: int) -&gt; float:\n        \"\"\"\n        计算贴合度奖励\n        当新零件与板材边缘及其他零件接触长度占其周长的比例超过25%时，\n        奖励值等于该比例；否则给予-1惩罚\n        \"\"\"\n        if current_step == 0 or new_part is None:\n            return 0.0\n        \n        # 计算新零件的周长\n        perimeter = self._calculate_perimeter(new_part)\n        if perimeter &lt;= 0:\n            return -1.0\n        \n        # 计算与板材边缘的接触长度\n        contact_with_bin = self._calculate_contact_with_bin(new_part, bin_polygon)\n        \n        # 计算与其他已排样零件的接触长度\n        contact_with_parts = self._calculate_contact_with_parts(new_part, placed_parts)\n        \n        # 总接触长度\n        total_contact_length = contact_with_bin + contact_with_parts\n        \n        # 计算贴合比例\n        fitting_ratio = total_contact_length / perimeter\n        \n        # 根据阈值返回奖励\n        if fitting_ratio &gt; self.fitting_threshold:\n            return fitting_ratio\n        else:\n            return -1.0\n\n    def _calculate_utilization_reward(self, current_layout_info: Dict, previous_layout_info: Optional[Dict]) -&gt; float:\n        \"\"\"\n        计算材料利用率奖励\n        R_utilization(t) = {\n            +1.0,  if ΔWaste ≤ 0 (废料面积减少或不变)\n            -ΔWaste/Waste_prev,  if ΔWaste &gt; 0 (废料面积增加)\n        }\n        \"\"\"\n        if previous_layout_info is None:\n            return 0.5\n        \n        current_waste = current_layout_info['waste_area']\n        previous_waste = previous_layout_info['waste_area']\n        delta_waste = current_waste - previous_waste\n        \n        if delta_waste &lt;= 0:\n            return 1.0\n        else:\n            return -delta_waste / previous_waste if previous_waste &gt; 0 else -0.5\n\n    def _calculate_area_rule_reward(\n        self,\n        parts: List,\n        placement_sequence: List[int],\n        current_step: int\n    ) -&gt; float:\n        \"\"\"\n        规则奖励：鼓励当前选择的零件接近“面积降序”顺序。\n        - 先根据零件实际几何面积计算一个面积降序序列\n        - 如果当前选择的零件在该序列中越靠前，得到的奖励越高（0~1）\n        \"\"\"\n        if self.rule_weight &lt;= 0:\n            return 0.0\n        if current_step &lt; 0 or current_step &gt;= len(placement_sequence):\n            return 0.0\n        try:\n            # 计算每个零件的面积\n            areas = [abs(GeometryUtil.polygon_area(p)) for p in parts]\n            if not areas:\n                return 0.0\n            # 按面积降序排序，得到 rank\n            order = sorted(range(len(areas)), key=lambda i: areas[i], reverse=True)\n            rank = {idx: r for r, idx in enumerate(order)}\n            current_idx = placement_sequence[current_step]\n            if current_idx not in rank:\n                return 0.0\n            area_rank = rank[current_idx]  # 0 表示面积最大\n            denom = max(1, len(areas) - 1)\n            # 归一化到 0~1，越大越好\n            norm_rank = 1.0 - area_rank / denom\n            return float(norm_rank)\n        except Exception:\n            # 出现任何异常时，不提供规则奖励，避免影响训练稳定性\n            return 0.0\n\n    def _calculate_perimeter(self, part) -&gt; float:\n        \"\"\"计算零件周长\"\"\"\n        if not part or len(part) &lt; 3:\n            return 0.0\n        \n        perimeter = 0\n        for i in range(len(part)):\n            p1 = part[i]\n            p2 = part[(i + 1) % len(part)]\n            dx = p2['x'] - p1['x']\n            dy = p2['y'] - p1['y']\n            perimeter += (dx**2 + dy**2)**0.5\n        return perimeter\n\n    def _calculate_contact_with_bin(self, new_part, bin_polygon: List[Dict]) -&gt; float:\n        \"\"\"计算新零件与板材边缘的接触长度\"\"\"\n        if not new_part or not bin_polygon:\n            return 0.0\n        \n        contact_length = 0.0\n        tolerance = 1e-3  # 接触判断的容差\n        \n        # 遍历新零件的每条边\n        for i in range(len(new_part)):\n            part_edge_start = new_part[i]\n            part_edge_end = new_part[(i + 1) % len(new_part)]\n            \n            # 遍历板材的每条边\n            for j in range(len(bin_polygon)):\n                bin_edge_start = bin_polygon[j]\n                bin_edge_end = bin_polygon[(j + 1) % len(bin_polygon)]\n                \n                # 计算两条边的重叠长度\n                overlap = self._calculate_edge_overlap(part_edge_start, part_edge_end, \n                                                     bin_edge_start, bin_edge_end, tolerance)\n                contact_length += overlap\n        \n        return contact_length\n    \n    def _calculate_contact_with_parts(self, new_part, placed_parts: List) -&gt; float:\n        \"\"\"计算新零件与其他已排样零件的接触长度\"\"\"\n        if not new_part or not placed_parts:\n            return 0.0\n        \n        contact_length = 0.0\n        tolerance = 1e-3  # 接触判断的容差\n        \n        # 遍历新零件的每条边\n        for i in range(len(new_part)):\n            part_edge_start = new_part[i]\n            part_edge_end = new_part[(i + 1) % len(new_part)]\n            \n            # 遍历所有已放置零件\n            for placed_part in placed_parts:\n                if not placed_part:\n                    continue\n                \n                # 遍历已放置零件的每条边\n                for j in range(len(placed_part)):\n                    placed_edge_start = placed_part[j]\n                    placed_edge_end = placed_part[(j + 1) % len(placed_part)]\n                    \n                    # 计算两条边的重叠长度\n                    overlap = self._calculate_edge_overlap(part_edge_start, part_edge_end, \n                                                         placed_edge_start, placed_edge_end, tolerance)\n                    contact_length += overlap\n        \n        return contact_length\n    \n    def _calculate_edge_overlap(self, edge1_start: Dict, edge1_end: Dict, \n                               edge2_start: Dict, edge2_end: Dict, tolerance: float) -&gt; float:\n        \"\"\"计算两条边的重叠长度\"\"\"\n        # 简化实现：检查两条边是否平行且距离小于容差\n        # 计算边的向量\n        vec1 = {'x': edge1_end['x'] - edge1_start['x'], 'y': edge1_end['y'] - edge1_start['y']}\n        vec2 = {'x': edge2_end['x'] - edge2_start['x'], 'y': edge2_end['y'] - edge2_start['y']}\n        \n        # 计算边的长度\n        len1 = (vec1['x']**2 + vec1['y']**2)**0.5\n        len2 = (vec2['x']**2 + vec2['y']**2)**0.5\n        \n        if len1 &lt; tolerance or len2 &lt; tolerance:\n            return 0.0\n        \n        # 归一化向量\n        vec1_norm = {'x': vec1['x'] / len1, 'y': vec1['y'] / len1}\n        vec2_norm = {'x': vec2['x'] / len2, 'y': vec2['y'] / len2}\n        \n        # 检查是否平行\n        cross_product = abs(vec1_norm['x'] * vec2_norm['y'] - vec1_norm['y'] * vec2_norm['x'])\n        if cross_product &gt; tolerance:\n            return 0.0  # 不平行\n        \n        # 计算点到直线的距离\n        dist = self._point_to_line_distance(edge1_start, edge2_start, edge2_end)\n        if dist &gt; tolerance:\n            return 0.0  # 距离太远\n        \n        # 计算重叠长度（简化：使用投影方法）\n        # 将edge1的端点投影到edge2所在直线上\n        proj1 = self._project_point_on_line(edge1_start, edge2_start, edge2_end)\n        proj2 = self._project_point_on_line(edge1_end, edge2_start, edge2_end)\n        \n        # 计算重叠区间\n        overlap = self._calculate_line_segment_overlap(proj1, proj2, 0.0, len2)\n        \n        return max(0.0, overlap)\n    \n    def _point_to_line_distance(self, point: Dict, line_start: Dict, line_end: Dict) -&gt; float:\n        \"\"\"计算点到直线的距离\"\"\"\n        # 使用向量叉积计算点到直线的距离\n        dx = line_end['x'] - line_start['x']\n        dy = line_end['y'] - line_start['y']\n        \n        if dx == 0 and dy == 0:\n            return ((point['x'] - line_start['x'])**2 + (point['y'] - line_start['y'])**2)**0.5\n        \n        # 计算垂直距离\n        cross = abs((point['x'] - line_start['x']) * dy - (point['y'] - line_start['y']) * dx)\n        line_length = (dx**2 + dy**2)**0.5\n        \n        return cross / line_length\n    \n    def _project_point_on_line(self, point: Dict, line_start: Dict, line_end: Dict) -&gt; float:\n        \"\"\"将点投影到直线上，返回投影点在直线上的参数位置\"\"\"\n        dx = line_end['x'] - line_start['x']\n        dy = line_end['y'] - line_start['y']\n        \n        if dx == 0 and dy == 0:\n            return 0.0\n        \n        # 计算投影参数\n        t = ((point['x'] - line_start['x']) * dx + (point['y'] - line_start['y']) * dy) / (dx**2 + dy**2)\n        \n        # 将t转换为距离\n        line_length = (dx**2 + dy**2)**0.5\n        return t * line_length\n    \n    def _calculate_line_segment_overlap(self, proj1: float, proj2: float, \n                                       seg_start: float, seg_end: float) -&gt; float:\n        \"\"\"计算两个线段的重叠长度\"\"\"\n        # 确保proj1 &lt;= proj2\n        if proj1 &gt; proj2:\n            proj1, proj2 = proj2, proj1\n        \n        # 计算重叠区间\n        overlap_start = max(proj1, seg_start)\n        overlap_end = min(proj2, seg_end)\n        \n        return max(0.0, overlap_end - overlap_start)\n\n    def update_weights(self, w1: float, w2: float, w3: float):\n        \"\"\"动态更新权重系数\"\"\"\n        total_weight = w1 + w2 + w3\n        self.w1 = w1 / total_weight\n        self.w2 = w2 / total_weight\n        self.w3 = w3 / total_weight\n\n    def get_weights(self) -&gt; Tuple[float, float, float]:\n        \"\"\"获取当前权重\"\"\"\n        return self.w1, self.w2, self.w3\n\n    def calculate_final_reward(self, \n                             bin_polygon: List[Dict], \n                             parts: List, \n                             placement_sequence: List[int]) -&gt; Dict:\n        \"\"\"\n        计算完整序列的最终奖励（用于评估）\n        \n        Args:\n            bin_polygon: 容器多边形\n            parts: 零件列表\n            placement_sequence: 完整的放置序列\n            \n        Returns:\n            final_metrics: 最终的评估指标\n        \"\"\"\n        # 使用PlacementWorker进行完整排版\n        sequence_parts = [parts[i] for i in placement_sequence]\n        rotations = [0] * len(sequence_parts)\n        \n        worker = PlacementWorker(\n            bin_polygon=bin_polygon,\n            paths=sequence_parts,\n            ids=placement_sequence,\n            rotations=rotations,\n            config=self.config\n        )\n        \n        placed, unplaced, bounding_box_area = worker.place_paths()\n        \n        # 计算最终布局信息\n        final_layout_info = self._calculate_layout_info(placed, bounding_box_area, bin_polygon)\n        \n        # 计算各维度最终得分\n        final_compactness = self._calculate_compactness_reward(final_layout_info)\n        final_fitting = 1.0  # 完整序列的贴合度需要特殊计算\n        final_utilization = 1.0 if final_layout_info['waste_area'] == 0 else final_layout_info['material_utilization']\n        \n        final_score = self.w1 * final_compactness + self.w2 * final_fitting + self.w3 * final_utilization\n        \n        return {\n            'final_score': final_score,\n            'material_utilization': final_layout_info['material_utilization'],\n            'compactness': final_compactness,\n            'bbox_ratio': final_layout_info['bbox_ratio'],\n            'waste_area': final_layout_info['waste_area'],\n            'bounding_box_area': bounding_box_area,\n            'total_parts_area': final_layout_info['total_parts_area'],\n            'num_placed_parts': len(placed),\n            'num_unplaced_parts': len(unplaced)\n        } "
 }
 ```
 User decision: **accepted**
@@ -4845,64 +4845,64 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/ppo_trainer.py&quot;
+  "relativeWorkspacePath": "src/ppo_trainer.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;b8c79b7a-8302-4c43-b9c7-87f7fd1ae5c6&quot;
+  "codeblockId": "b8c79b7a-8302-4c43-b9c7-87f7fd1ae5c6"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;              seq_len = len(rewards)\n              advantages = torch.zeros_like(rewards)\n-         last_gae_lam = 0\n+             last_gae_lam = 0\n              \n              # GAE 计算\n              for t in reversed(range(seq_len)):\n                  if t == seq_len - 1:\n-                     next_value = 0.0 # 假设 episode 结束时价值为 0\n+                     next_value = 0.0  # 假设 episode 结束时价值为 0\n                  else:\n                      next_value = values[t + 1]&quot;,
-        &quot;oldStart&quot;: 76,
-        &quot;newStart&quot;: 76,
-        &quot;oldLines&quot;: 10,
-        &quot;newLines&quot;: 10,
-        &quot;linesRemoved&quot;: 2,
-        &quot;linesAdded&quot;: 2
+        "diffString": "              seq_len = len(rewards)\n              advantages = torch.zeros_like(rewards)\n-         last_gae_lam = 0\n+             last_gae_lam = 0\n              \n              # GAE 计算\n              for t in reversed(range(seq_len)):\n                  if t == seq_len - 1:\n-                     next_value = 0.0 # 假设 episode 结束时价值为 0\n+                     next_value = 0.0  # 假设 episode 结束时价值为 0\n                  else:\n                      next_value = values[t + 1]",
+        "oldStart": 76,
+        "newStart": 76,
+        "oldLines": 10,
+        "newLines": 10,
+        "linesRemoved": 2,
+        "linesAdded": 2
       },
       {
-        &quot;diffString&quot;: &quot;                  \n                  # 初始化 LSTM 和 Mask\n-             with torch.no_grad():\n-                 encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n-             decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n-             decoder_input = decoder_input.squeeze(0)\n-             selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n+                 with torch.no_grad():\n+                     encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n+                 decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n+                 decoder_input = decoder_input.squeeze(0)\n+                 selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n  \n                  done = False\n                  ep_step = 0\n                  \n                  while not done:\n-                 self.global_step += 1\n+                     self.global_step += 1\n                      ep_step += 1\n-                 \n-                 with torch.no_grad():\n+                     \n+                     with torch.no_grad():\n                          # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n-                     logits, value, next_decoder_hidden = self.policy.forward(\n-                         encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n+                         logits, value, next_decoder_hidden = self.policy.forward(\n+                             encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                              decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                          )\n-                     \n-                     dist = Categorical(logits=logits)\n-                     action = dist.sample()\n-                     log_prob = dist.log_prob(action)\n+                         \n+                         dist = Categorical(logits=logits)\n+                         action = dist.sample()\n+                         log_prob = dist.log_prob(action)\n                      \n                      # 环境交互\n-                 next_state_np, reward, done, info = self.env.step(action.item())\n-                 \n+                     next_state_np, reward, done, info = self.env.step(action.item())\n+                     \n                      # 存储 Step 数据\n                      ep_actions.append(action.item())&quot;,
-        &quot;oldStart&quot;: 184,
-        &quot;newStart&quot;: 184,
-        &quot;oldLines&quot;: 31,
-        &quot;newLines&quot;: 31,
-        &quot;linesRemoved&quot;: 16,
-        &quot;linesAdded&quot;: 16
+        "diffString": "                  \n                  # 初始化 LSTM 和 Mask\n-             with torch.no_grad():\n-                 encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n-             decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n-             decoder_input = decoder_input.squeeze(0)\n-             selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n+                 with torch.no_grad():\n+                     encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n+                 decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n+                 decoder_input = decoder_input.squeeze(0)\n+                 selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n  \n                  done = False\n                  ep_step = 0\n                  \n                  while not done:\n-                 self.global_step += 1\n+                     self.global_step += 1\n                      ep_step += 1\n-                 \n-                 with torch.no_grad():\n+                     \n+                     with torch.no_grad():\n                          # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n-                     logits, value, next_decoder_hidden = self.policy.forward(\n-                         encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n+                         logits, value, next_decoder_hidden = self.policy.forward(\n+                             encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                              decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                          )\n-                     \n-                     dist = Categorical(logits=logits)\n-                     action = dist.sample()\n-                     log_prob = dist.log_prob(action)\n+                         \n+                         dist = Categorical(logits=logits)\n+                         action = dist.sample()\n+                         log_prob = dist.log_prob(action)\n                      \n                      # 环境交互\n-                 next_state_np, reward, done, info = self.env.step(action.item())\n-                 \n+                     next_state_np, reward, done, info = self.env.step(action.item())\n+                     \n                      # 存储 Step 数据\n                      ep_actions.append(action.item())",
+        "oldStart": 184,
+        "newStart": 184,
+        "oldLines": 31,
+        "newLines": 31,
+        "linesRemoved": 16,
+        "linesAdded": 16
       },
       {
-        &quot;diffString&quot;: &quot;                      \n                      # 更新状态\n-                 decoder_hidden = next_decoder_hidden\n-                 decoder_input = encoder_outputs[action.item()]\n-                 selected_mask[action.item()] = True\n+                     decoder_hidden = next_decoder_hidden\n+                     decoder_input = encoder_outputs[action.item()]\n+                     selected_mask[action.item()] = True\n                  \n                  # Episode 结束，存入 Buffer&quot;,
-        &quot;oldStart&quot;: 218,
-        &quot;newStart&quot;: 218,
-        &quot;oldLines&quot;: 7,
-        &quot;newLines&quot;: 7,
-        &quot;linesRemoved&quot;: 3,
-        &quot;linesAdded&quot;: 3
+        "diffString": "                      \n                      # 更新状态\n-                 decoder_hidden = next_decoder_hidden\n-                 decoder_input = encoder_outputs[action.item()]\n-                 selected_mask[action.item()] = True\n+                     decoder_hidden = next_decoder_hidden\n+                     decoder_input = encoder_outputs[action.item()]\n+                     selected_mask[action.item()] = True\n                  \n                  # Episode 结束，存入 Buffer",
+        "oldStart": 218,
+        "newStart": 218,
+        "oldLines": 7,
+        "newLines": 7,
+        "linesRemoved": 3,
+        "linesAdded": 3
       },
       {
-        &quot;diffString&quot;: &quot;                  entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                  \n-                     loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n+                 loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                      \n                  # 优化\n-                     self.optimizer.zero_grad()\n-                     loss.backward()\n+                 self.optimizer.zero_grad()\n+                 loss.backward()\n                  nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n-                     self.optimizer.step()\n+                 self.optimizer.step()\n              \n                  if epoch == 0:&quot;,
-        &quot;oldStart&quot;: 288,
-        &quot;newStart&quot;: 288,
-        &quot;oldLines&quot;: 11,
-        &quot;newLines&quot;: 11,
-        &quot;linesRemoved&quot;: 4,
-        &quot;linesAdded&quot;: 4
+        "diffString": "                  entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                  \n-                     loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n+                 loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                      \n                  # 优化\n-                     self.optimizer.zero_grad()\n-                     loss.backward()\n+                 self.optimizer.zero_grad()\n+                 loss.backward()\n                  nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n-                     self.optimizer.step()\n+                 self.optimizer.step()\n              \n                  if epoch == 0:",
+        "oldStart": 288,
+        "newStart": 288,
+        "oldLines": 11,
+        "newLines": 11,
+        "linesRemoved": 4,
+        "linesAdded": 4
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/ppo_trainer.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;..&#39;))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\&quot;Warning: wandb not available. Install with: pip install wandb\&quot;)\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \&quot;\&quot;\&quot;\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \&quot;\&quot;\&quot;\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \&quot;\&quot;\&quot;\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \&quot;\&quot;\&quot;\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \&quot;\&quot;\&quot;\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \&quot;\&quot;\&quot;\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0][&#39;state&#39;].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep[&#39;rewards&#39;], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep[&#39;values&#39;], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep[&#39;state&#39;], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep[&#39;actions&#39;], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep[&#39;log_probs&#39;], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep[&#39;valid_length&#39;])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \&quot;\&quot;\&quot;主训练循环\&quot;\&quot;\&quot;\n        logger.info(\&quot;Starting PPO training loop (Trajectory-based)...\&quot;)\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    &#39;state&#39;: state_np, # 原始状态 (max_parts, 2)\n                    &#39;actions&#39;: ep_actions,\n                    &#39;log_probs&#39;: ep_log_probs,\n                    &#39;rewards&#39;: ep_rewards,\n                    &#39;values&#39;: ep_values,\n                    &#39;valid_length&#39;: valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get(&#39;material_utilization&#39;, 0)\n                    logger.info(f\&quot;Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\&quot;)\n                    if self.use_wandb:\n                        wandb.log({\&quot;rollout/ep_reward\&quot;: sum(ep_rewards), \&quot;rollout/ep_util\&quot;: util, \&quot;global_step\&quot;: self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\&quot;Starting PPO update...\&quot;)\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction=&#39;none&#39;)\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\&quot;Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\&quot;)\n            \n            if self.use_wandb:\n                wandb.log({\n                    \&quot;train/loss\&quot;: loss.item(),\n                    \&quot;train/policy_loss\&quot;: policy_loss.item(),\n                    \&quot;train/value_loss\&quot;: value_loss.item(),\n                    \&quot;train/entropy_loss\&quot;: entropy_loss.item(),\n                    \&quot;global_step\&quot;: self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\&quot;Evaluating at step {self.global_step}...\&quot;)\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get(&#39;material_utilization&#39;, 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\&quot;Eval Avg Util: {avg_util:.4f}\&quot;)\n        if self.use_wandb:\n            wandb.log({\&quot;eval/avg_util\&quot;: avg_util, \&quot;global_step\&quot;: self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = &#39;ppo_policy_best.pth&#39; if is_best else f&#39;ppo_policy_latest.pth&#39;\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            &#39;model_state_dict&#39;: self.policy.state_dict(),\n            &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),\n            &#39;args&#39;: self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description=&#39;PPO Trainer for 2D Nesting Problem&#39;)\n    \n    # --- Data and Paths ---\n    parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;)\n    parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)\n    parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models_ppo&#39;, help=&#39;Directory to save models&#39;)\n    parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs_ppo&#39;, help=&#39;Directory to save logs&#39;)\n    \n    # --- Model Hyperparameters ---\n    parser.add_argument(&#39;--input_dim&#39;, type=int, default=2)\n    parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)\n    parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument(&#39;--total_timesteps&#39;, type=int, default=1_000_000, help=&#39;Total timesteps to train the agent&#39;)\n    parser.add_argument(&#39;--learning_rate&#39;, type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument(&#39;--batch_size&#39;, type=int, default=16, help=&#39;Number of episodes per PPO update&#39;)\n    parser.add_argument(&#39;--n_epochs&#39;, type=int, default=4, help=&#39;Number of epochs to update the policy on the collected data&#39;)\n    parser.add_argument(&#39;--gamma&#39;, type=float, default=0.99)\n    parser.add_argument(&#39;--gae_lambda&#39;, type=float, default=0.95)\n    parser.add_argument(&#39;--clip_range&#39;, type=float, default=0.2)\n    parser.add_argument(&#39;--ent_coef&#39;, type=float, default=0.01, help=&#39;Entropy coefficient&#39;)\n    parser.add_argument(&#39;--vf_coef&#39;, type=float, default=0.5, help=&#39;Value function coefficient&#39;)\n    parser.add_argument(&#39;--max_grad_norm&#39;, type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    \n    # --- Training and Logging ---\n    parser.add_argument(&#39;--eval_interval&#39;, type=int, default=5000, help=&#39;Evaluate the agent every N steps&#39;)\n    parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=100)\n    parser.add_argument(&#39;--use_wandb&#39;, action=&#39;store_true&#39;, default=True, help=&#39;Use Weights &amp; Biases for logging&#39;)\n    parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;ppo_svgnest&#39;)\n    parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=f&#39;ppo_run_{time.strftime(\&quot;%Y%m%d-%H%M%S\&quot;)}&#39;)\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, &#39;train_ppo.log&#39;))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(levelname)s - %(message)s&#39;))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\&quot;Training arguments: {args}\&quot;)\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == &#39;__main__&#39;:\n    main()\n&quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/ppo_trainer.py",
+  "contentsAfterEdit": "import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\"Warning: wandb not available. Install with: pip install wandb\")\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \"\"\"\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \"\"\"\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \"\"\"\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \"\"\"\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \"\"\"\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \"\"\"\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0]['state'].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep['rewards'], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep['values'], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep['state'], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep['actions'], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep['log_probs'], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep['valid_length'])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \"\"\"主训练循环\"\"\"\n        logger.info(\"Starting PPO training loop (Trajectory-based)...\")\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    'state': state_np, # 原始状态 (max_parts, 2)\n                    'actions': ep_actions,\n                    'log_probs': ep_log_probs,\n                    'rewards': ep_rewards,\n                    'values': ep_values,\n                    'valid_length': valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get('material_utilization', 0)\n                    logger.info(f\"Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\")\n                    if self.use_wandb:\n                        wandb.log({\"rollout/ep_reward\": sum(ep_rewards), \"rollout/ep_util\": util, \"global_step\": self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\"Starting PPO update...\")\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction='none')\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\"Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\")\n            \n            if self.use_wandb:\n                wandb.log({\n                    \"train/loss\": loss.item(),\n                    \"train/policy_loss\": policy_loss.item(),\n                    \"train/value_loss\": value_loss.item(),\n                    \"train/entropy_loss\": entropy_loss.item(),\n                    \"global_step\": self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\"Evaluating at step {self.global_step}...\")\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get('material_utilization', 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\"Eval Avg Util: {avg_util:.4f}\")\n        if self.use_wandb:\n            wandb.log({\"eval/avg_util\": avg_util, \"global_step\": self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = 'ppo_policy_best.pth' if is_best else f'ppo_policy_latest.pth'\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            'model_state_dict': self.policy.state_dict(),\n            'optimizer_state_dict': self.optimizer.state_dict(),\n            'args': self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description='PPO Trainer for 2D Nesting Problem')\n    \n    # --- Data and Paths ---\n    parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl')\n    parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')\n    parser.add_argument('--output_dir', type=str, default='./models_ppo', help='Directory to save models')\n    parser.add_argument('--log_dir', type=str, default='./logs_ppo', help='Directory to save logs')\n    \n    # --- Model Hyperparameters ---\n    parser.add_argument('--input_dim', type=int, default=2)\n    parser.add_argument('--hidden_dim', type=int, default=128)\n    parser.add_argument('--max_seq_len', type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument('--total_timesteps', type=int, default=1_000_000, help='Total timesteps to train the agent')\n    parser.add_argument('--learning_rate', type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument('--batch_size', type=int, default=16, help='Number of episodes per PPO update')\n    parser.add_argument('--n_epochs', type=int, default=4, help='Number of epochs to update the policy on the collected data')\n    parser.add_argument('--gamma', type=float, default=0.99)\n    parser.add_argument('--gae_lambda', type=float, default=0.95)\n    parser.add_argument('--clip_range', type=float, default=0.2)\n    parser.add_argument('--ent_coef', type=float, default=0.01, help='Entropy coefficient')\n    parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function coefficient')\n    parser.add_argument('--max_grad_norm', type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    \n    # --- Training and Logging ---\n    parser.add_argument('--eval_interval', type=int, default=5000, help='Evaluate the agent every N steps')\n    parser.add_argument('--max_test_instances', type=int, default=100)\n    parser.add_argument('--use_wandb', action='store_true', default=True, help='Use Weights &amp; Biases for logging')\n    parser.add_argument('--wandb_project', type=str, default='ppo_svgnest')\n    parser.add_argument('--wandb_run_name', type=str, default=f'ppo_run_{time.strftime(\"%Y%m%d-%H%M%S\")}')\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, 'train_ppo.log'))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\"Training arguments: {args}\")\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == '__main__':\n    main()\n"
 }
 ```
 User decision: **accepted**
@@ -5161,37 +5161,37 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/environment/td_environment.py&quot;
+  "relativeWorkspacePath": "src/environment/td_environment.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;0aba4aef-dd38-4755-9718-e84b480a6b4f&quot;
+  "codeblockId": "0aba4aef-dd38-4755-9718-e84b480a6b4f"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;      \n      def _get_state(self) -&gt; np.ndarray:\n-         \&quot;\&quot;\&quot;获取当前状态 - 简化版本，只包含零件特征\&quot;\&quot;\&quot;\n-         # 创建零件特征矩阵 [max_parts, 2]\n-         state = np.zeros((self.max_parts, 2), dtype=np.float32)\n+         \&quot;\&quot;\&quot;\n+         获取当前状态表示。\n+         改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n+         \n+         state 维度: [max_parts, 5]\n+         - 0: 归一化宽度 (width / 100)\n+         - 1: 归一化高度 (height / 100)\n+         - 2: 是否已放置 (is_placed: 0/1)\n+         - 3: 当前材料利用率估计 (material_utilization)\n+         - 4: 当前步数比例 (current_step / max(num_parts, 1))\n+         \&quot;\&quot;\&quot;\n+         state = np.zeros((self.max_parts, 5), dtype=np.float32)\n          \n-         # 填入零件信息（宽度，高度）\n+         # 基本几何信息：宽、高\n          for i, part_info in enumerate(self.parts_info):\n-             if i &lt; self.max_parts:\n-                 state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n-                 state[i, 1] = part_info[1] / 100.0  # 归一化高度\n+             if i &gt;= self.max_parts:\n+                 break\n+             state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n+             state[i, 1] = part_info[1] / 100.0  # 归一化高度\n          \n+         # 是否已放置标记\n+         if self.placement_sequence:\n+             placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n+             for idx in self.placement_sequence:\n+                 if 0 &lt;= idx &lt; self.max_parts:\n+                     placed_flags[idx] = 1.0\n+             state[:, 2] = placed_flags\n+         \n+         # 全局排样信息：材料利用率 + 步数比例\n+         # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n+         if hasattr(self, \&quot;previous_layout_info\&quot;) and self.previous_layout_info is not None:\n+             util = float(self.previous_layout_info.get(\&quot;material_utilization\&quot;, 0.0))\n+         else:\n+             util = 0.0\n+         step_ratio = 0.0\n+         if self.num_parts &gt; 0:\n+             step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n+         \n+         if self.num_parts &gt; 0:\n+             state[: self.num_parts, 3] = util\n+             state[: self.num_parts, 4] = step_ratio\n+         \n          return state\n      &quot;,
-        &quot;oldStart&quot;: 187,
-        &quot;newStart&quot;: 187,
-        &quot;oldLines&quot;: 14,
-        &quot;newLines&quot;: 46,
-        &quot;linesRemoved&quot;: 7,
-        &quot;linesAdded&quot;: 39
+        "diffString": "      \n      def _get_state(self) -&gt; np.ndarray:\n-         \"\"\"获取当前状态 - 简化版本，只包含零件特征\"\"\"\n-         # 创建零件特征矩阵 [max_parts, 2]\n-         state = np.zeros((self.max_parts, 2), dtype=np.float32)\n+         \"\"\"\n+         获取当前状态表示。\n+         改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n+         \n+         state 维度: [max_parts, 5]\n+         - 0: 归一化宽度 (width / 100)\n+         - 1: 归一化高度 (height / 100)\n+         - 2: 是否已放置 (is_placed: 0/1)\n+         - 3: 当前材料利用率估计 (material_utilization)\n+         - 4: 当前步数比例 (current_step / max(num_parts, 1))\n+         \"\"\"\n+         state = np.zeros((self.max_parts, 5), dtype=np.float32)\n          \n-         # 填入零件信息（宽度，高度）\n+         # 基本几何信息：宽、高\n          for i, part_info in enumerate(self.parts_info):\n-             if i &lt; self.max_parts:\n-                 state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n-                 state[i, 1] = part_info[1] / 100.0  # 归一化高度\n+             if i &gt;= self.max_parts:\n+                 break\n+             state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n+             state[i, 1] = part_info[1] / 100.0  # 归一化高度\n          \n+         # 是否已放置标记\n+         if self.placement_sequence:\n+             placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n+             for idx in self.placement_sequence:\n+                 if 0 &lt;= idx &lt; self.max_parts:\n+                     placed_flags[idx] = 1.0\n+             state[:, 2] = placed_flags\n+         \n+         # 全局排样信息：材料利用率 + 步数比例\n+         # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n+         if hasattr(self, \"previous_layout_info\") and self.previous_layout_info is not None:\n+             util = float(self.previous_layout_info.get(\"material_utilization\", 0.0))\n+         else:\n+             util = 0.0\n+         step_ratio = 0.0\n+         if self.num_parts &gt; 0:\n+             step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n+         \n+         if self.num_parts &gt; 0:\n+             state[: self.num_parts, 3] = util\n+             state[: self.num_parts, 4] = step_ratio\n+         \n          return state\n      ",
+        "oldStart": 187,
+        "newStart": 187,
+        "oldLines": 14,
+        "newLines": 46,
+        "linesRemoved": 7,
+        "linesAdded": 39
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/environment/td_environment.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import numpy as np\nimport torch\nimport sys\nimport os\nimport logging\nfrom typing import List, Dict, Any, Tuple, Optional\nimport random\nimport json\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;../..&#39;))\n\nfrom src.reward.td_reward_calculator import TDRewardCalculator\n\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDEnvironment:\n    \&quot;\&quot;\&quot;时序差分环境 - 支持即时奖励计算和PlacementWorker集成\&quot;\&quot;\&quot;\n    \n    def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3)):\n        \&quot;\&quot;\&quot;\n        初始化环境\n        \n        Args:\n            max_parts: 最大零件数量\n            reward_weights: 三维奖励权重 (紧凑度, 贴合度, 材料利用率)\n        \&quot;\&quot;\&quot;\n        self.max_parts = max_parts\n        \n        # 初始化奖励计算器\n        self.reward_calculator = TDRewardCalculator(\n            w1=reward_weights[0], \n            w2=reward_weights[1], \n            w3=reward_weights[2]\n        )\n\n        # 只初始化状态变量\n        self.bin_polygon = None\n        self.parts = []\n        self.parts_info = []\n        self.num_parts = 0\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = []\n        self.done = False\n        # -----------------\n        \n        logger.info(f\&quot;TDEnvironment initialized with max_parts={max_parts}\&quot;)\n\n    def reset(self, instance: Optional[Dict] = None) -&gt; np.ndarray:\n        \&quot;\&quot;\&quot;重置环境\&quot;\&quot;\&quot;\n        if instance is not None:\n            self.load_instance(instance)\n        else:\n            # 使用默认的测试实例\n            logger.warning(\&quot;No instance provided, using default test instance\&quot;)\n            self.load_default_instance()\n            \n        # 重置状态\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = list(range(len(self.parts)))\n        self.done = False\n        self.total_reward = 0\n        self.previous_layout_info = None\n        self.step_rewards = []\n        self.step_details = []\n        \n        return self._get_state()\n    \n    def load_instance(self, instance: Dict):\n        \&quot;\&quot;\&quot;从实例数据加载bin和parts\&quot;\&quot;\&quot;\n        # 设置容器\n        bin_width, bin_height = instance[&#39;bin&#39;]\n        self.bin_bounds = {\n            &#39;x&#39;: 0, &#39;y&#39;: 0,\n            &#39;width&#39;: bin_width,\n            &#39;height&#39;: bin_height\n        }\n        \n        # 创建容器多边形\n        self.bin_polygon = [\n            {&#39;x&#39;: 0, &#39;y&#39;: 0},\n            {&#39;x&#39;: bin_width, &#39;y&#39;: 0},\n            {&#39;x&#39;: bin_width, &#39;y&#39;: bin_height},\n            {&#39;x&#39;: 0, &#39;y&#39;: bin_height},\n            {&#39;x&#39;: 0, &#39;y&#39;: 0}\n        ]\n        \n        # 创建零件多边形 - 限制在最大数量内\n        self.parts = []\n        self.parts_info = []  # 存储原始的宽高信息\n        max_parts_to_load = min(len(instance[&#39;parts&#39;]), self.max_parts)\n        \n        for i, part in enumerate(instance[&#39;parts&#39;][:max_parts_to_load]):\n            width, height = part\n            # 创建自定义列表类\n            CustomList = type(&#39;CustomList&#39;, (list,), {})\n            polygon = CustomList([\n                {&#39;x&#39;: 0, &#39;y&#39;: 0},\n                {&#39;x&#39;: width, &#39;y&#39;: 0},\n                {&#39;x&#39;: width, &#39;y&#39;: height},\n                {&#39;x&#39;: 0, &#39;y&#39;: height},\n                {&#39;x&#39;: 0, &#39;y&#39;: 0}\n            ])\n            polygon.id = i\n            self.parts.append(polygon)\n            self.parts_info.append([width, height])\n            \n        self.num_parts = len(self.parts)\n        # --- 在这里添加日志打印 ---\n        # logger.info(f\&quot;--- Instance Loaded --- True part count: {self.num_parts} (from instance with {len(instance[&#39;parts&#39;])} parts)\&quot;)\n        # -------------------------\n        \n    def load_default_instance(self):\n        \&quot;\&quot;\&quot;加载默认测试实例\&quot;\&quot;\&quot;\n        default_instance = {\n            &#39;bin&#39;: [100, 100],\n            &#39;parts&#39;: [[20, 30], [25, 25], [15, 40], [30, 20], [10, 50]]\n        }\n        self.load_instance(default_instance)\n    \n    def step(self, action: int) -&gt; Tuple[np.ndarray, float, bool, Dict]:\n        \&quot;\&quot;\&quot;执行一步动作 - 时序差分版本\&quot;\&quot;\&quot;\n        if self.done:\n            return self._get_state(), 0, True, {}\n            \n        # 检查动作是否有效\n        if action &gt;= self.num_parts or action in self.placement_sequence:\n            # 无效动作，给予负奖励\n            reward = -1.0\n            info = {\n                &#39;invalid_action&#39;: True,\n                &#39;step&#39;: self.current_step,\n                &#39;total_reward&#39;: self.total_reward\n            }\n            return self._get_state(), reward, self.done, info\n        \n        # 执行动作：将选中的零件添加到放置序列\n        self.placement_sequence.append(action)\n        if action in self.unplaced_parts:\n            self.unplaced_parts.remove(action)\n            \n        self.current_step += 1\n        \n        # 计算即时奖励\n        reward, reward_details = self._calculate_immediate_reward()\n        self.total_reward += reward\n        self.step_rewards.append(reward)\n        self.step_details.append(reward_details)\n        \n        # 更新previous_layout_info用于下一步计算\n        if &#39;layout_info&#39; in reward_details:\n            self.previous_layout_info = reward_details[&#39;layout_info&#39;]\n        \n        # 检查是否结束\n        if len(self.placement_sequence) &gt;= self.num_parts or len(self.unplaced_parts) == 0:\n            self.done = True\n            \n        info = {\n            &#39;step&#39;: self.current_step,\n            &#39;placed_parts&#39;: len(self.placement_sequence),\n            &#39;total_reward&#39;: self.total_reward,\n            &#39;step_reward&#39;: reward,\n            &#39;reward_details&#39;: reward_details,\n            &#39;placement_sequence&#39;: self.placement_sequence.copy()\n        }\n        \n        return self._get_state(), reward, self.done, info\n    \n    def _calculate_immediate_reward(self) -&gt; Tuple[float, Dict]:\n        \&quot;\&quot;\&quot;计算当前步骤的即时奖励\&quot;\&quot;\&quot;\n        try:\n            reward, details = self.reward_calculator.calculate_step_reward(\n                bin_polygon=self.bin_polygon,\n                parts=self.parts,\n                placement_sequence=self.placement_sequence,\n                current_step=self.current_step - 1,  # 转换为0-based索引\n                previous_layout_info=self.previous_layout_info\n            )\n            return reward, details\n        except Exception as e:\n            logger.warning(f\&quot;计算即时奖励时出错: {e}\&quot;)\n            return -1.0, {&#39;error&#39;: str(e)}\n    \n    def _get_state(self) -&gt; np.ndarray:\n        \&quot;\&quot;\&quot;\n        获取当前状态表示。\n        改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n        \n        state 维度: [max_parts, 5]\n        - 0: 归一化宽度 (width / 100)\n        - 1: 归一化高度 (height / 100)\n        - 2: 是否已放置 (is_placed: 0/1)\n        - 3: 当前材料利用率估计 (material_utilization)\n        - 4: 当前步数比例 (current_step / max(num_parts, 1))\n        \&quot;\&quot;\&quot;\n        state = np.zeros((self.max_parts, 5), dtype=np.float32)\n        \n        # 基本几何信息：宽、高\n        for i, part_info in enumerate(self.parts_info):\n            if i &gt;= self.max_parts:\n                break\n            state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n            state[i, 1] = part_info[1] / 100.0  # 归一化高度\n        \n        # 是否已放置标记\n        if self.placement_sequence:\n            placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n            for idx in self.placement_sequence:\n                if 0 &lt;= idx &lt; self.max_parts:\n                    placed_flags[idx] = 1.0\n            state[:, 2] = placed_flags\n        \n        # 全局排样信息：材料利用率 + 步数比例\n        # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n        if hasattr(self, \&quot;previous_layout_info\&quot;) and self.previous_layout_info is not None:\n            util = float(self.previous_layout_info.get(\&quot;material_utilization\&quot;, 0.0))\n        else:\n            util = 0.0\n        step_ratio = 0.0\n        if self.num_parts &gt; 0:\n            step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n        \n        if self.num_parts &gt; 0:\n            state[: self.num_parts, 3] = util\n            state[: self.num_parts, 4] = step_ratio\n        \n        return state\n    \n    def get_valid_actions(self) -&gt; List[int]:\n        \&quot;\&quot;\&quot;获取当前有效的动作\&quot;\&quot;\&quot;\n        return self.unplaced_parts.copy()\n    \n    def is_action_valid(self, action: int) -&gt; bool:\n        \&quot;\&quot;\&quot;检查动作是否有效\&quot;\&quot;\&quot;\n        return action &lt; self.num_parts and action not in self.placement_sequence\n\n    def get_placement_metrics(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取当前排料指标\&quot;\&quot;\&quot;\n        if len(self.placement_sequence) == 0:\n            return {\n                &#39;material_utilization&#39;: 0.0,\n                &#39;compactness&#39;: 0.0,\n                &#39;bbox_ratio&#39;: 0.0,\n                &#39;waste_area&#39;: 0.0,\n                &#39;final_score&#39;: 0.0\n            }\n        \n        # 使用奖励计算器获取最终指标\n        final_metrics = self.reward_calculator.calculate_final_reward(\n            bin_polygon=self.bin_polygon,\n            parts=self.parts,\n            placement_sequence=self.placement_sequence\n        )\n        \n        return final_metrics\n\n    def render(self, mode=&#39;human&#39;):\n        \&quot;\&quot;\&quot;渲染环境状态\&quot;\&quot;\&quot;\n        if mode == &#39;human&#39;:\n            print(f\&quot;Step: {self.current_step}\&quot;)\n            print(f\&quot;Placement sequence: {self.placement_sequence}\&quot;)\n            print(f\&quot;Unplaced parts: {self.unplaced_parts}\&quot;)\n            print(f\&quot;Total reward: {self.total_reward:.3f}\&quot;)\n            if self.step_rewards:\n                print(f\&quot;Last step reward: {self.step_rewards[-1]:.3f}\&quot;)\n            print(\&quot;-\&quot; * 50)\n\n    def get_episode_summary(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取episode总结\&quot;\&quot;\&quot;\n        final_metrics = self.get_placement_metrics()\n        \n        return {\n            &#39;total_steps&#39;: self.current_step,\n            &#39;total_reward&#39;: self.total_reward,\n            &#39;average_step_reward&#39;: np.mean(self.step_rewards) if self.step_rewards else 0,\n            &#39;placement_sequence&#39;: self.placement_sequence,\n            &#39;final_metrics&#39;: final_metrics,\n            &#39;step_rewards&#39;: self.step_rewards,\n            &#39;num_parts&#39;: self.num_parts,\n            &#39;success&#39;: len(self.placement_sequence) == self.num_parts\n        }\n\n    def update_reward_weights(self, w1: float, w2: float, w3: float):\n        \&quot;\&quot;\&quot;更新奖励权重\&quot;\&quot;\&quot;\n        self.reward_calculator.update_weights(w1, w2, w3)\n\n    def get_reward_weights(self) -&gt; Tuple[float, float, float]:\n        \&quot;\&quot;\&quot;获取当前奖励权重\&quot;\&quot;\&quot;\n        return self.reward_calculator.get_weights()\n\n\nclass TDDataLoader:\n    \&quot;\&quot;\&quot;时序差分数据加载器\&quot;\&quot;\&quot;\n    \n    def __init__(self, data_file: str, test_data_file: str = None):\n        self.data_file = data_file\n        self.test_data_file = test_data_file\n        self.instances = []\n        self.test_instances = []\n        self.load_data()\n        if test_data_file:\n            self.load_test_data()\n    \n    def load_data(self):\n        \&quot;\&quot;\&quot;加载训练数据\&quot;\&quot;\&quot;\n        try:\n            with open(self.data_file, &#39;r&#39;) as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 保留bin、parts和placement_order信息\n                    filtered_instance = {\n                        &#39;bin&#39;: instance[&#39;bin&#39;],\n                        &#39;parts&#39;: instance[&#39;parts&#39;],\n                        &#39;placement_order&#39;: instance.get(&#39;placement_order&#39;, [])\n                    }\n                    self.instances.append(filtered_instance)\n            logger.info(f\&quot;加载了 {len(self.instances)} 个训练实例\&quot;)\n        except Exception as e:\n            logger.error(f\&quot;加载训练数据时出错: {e}\&quot;)\n            self.instances = []\n    \n    def load_test_data(self):\n        \&quot;\&quot;\&quot;加载测试数据\&quot;\&quot;\&quot;\n        try:\n            with open(self.test_data_file, &#39;r&#39;) as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 只保留bin和parts信息\n                    filtered_instance = {\n                        &#39;bin&#39;: instance[&#39;bin&#39;],\n                        &#39;parts&#39;: instance[&#39;parts&#39;]\n                    }\n                    self.test_instances.append(filtered_instance)\n            logger.info(f\&quot;加载了 {len(self.test_instances)} 个测试实例\&quot;)\n        except Exception as e:\n            logger.error(f\&quot;加载测试数据时出错: {e}\&quot;)\n            self.test_instances = []\n    \n    def get_random_instance(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取随机训练实例\&quot;\&quot;\&quot;\n        if not self.instances:\n            return None\n        return random.choice(self.instances)\n    \n    def get_instance(self, index: int) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取指定索引的训练实例\&quot;\&quot;\&quot;\n        if 0 &lt;= index &lt; len(self.instances):\n            return self.instances[index]\n        return None\n    \n    def get_test_instance(self, index: int) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取指定索引的测试实例\&quot;\&quot;\&quot;\n        if 0 &lt;= index &lt; len(self.test_instances):\n            return self.test_instances[index]\n        return None\n    \n    def get_test_instances(self, num_instances: int = 100) -&gt; List[Dict]:\n        \&quot;\&quot;\&quot;获取指定数量的测试实例\&quot;\&quot;\&quot;\n        if not self.test_instances:\n            return []\n        return self.test_instances[:min(num_instances, len(self.test_instances))]\n    \n    def __len__(self):\n        return len(self.instances) &quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/environment/td_environment.py",
+  "contentsAfterEdit": "import numpy as np\nimport torch\nimport sys\nimport os\nimport logging\nfrom typing import List, Dict, Any, Tuple, Optional\nimport random\nimport json\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))\n\nfrom src.reward.td_reward_calculator import TDRewardCalculator\n\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDEnvironment:\n    \"\"\"时序差分环境 - 支持即时奖励计算和PlacementWorker集成\"\"\"\n    \n    def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3)):\n        \"\"\"\n        初始化环境\n        \n        Args:\n            max_parts: 最大零件数量\n            reward_weights: 三维奖励权重 (紧凑度, 贴合度, 材料利用率)\n        \"\"\"\n        self.max_parts = max_parts\n        \n        # 初始化奖励计算器\n        self.reward_calculator = TDRewardCalculator(\n            w1=reward_weights[0], \n            w2=reward_weights[1], \n            w3=reward_weights[2]\n        )\n\n        # 只初始化状态变量\n        self.bin_polygon = None\n        self.parts = []\n        self.parts_info = []\n        self.num_parts = 0\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = []\n        self.done = False\n        # -----------------\n        \n        logger.info(f\"TDEnvironment initialized with max_parts={max_parts}\")\n\n    def reset(self, instance: Optional[Dict] = None) -&gt; np.ndarray:\n        \"\"\"重置环境\"\"\"\n        if instance is not None:\n            self.load_instance(instance)\n        else:\n            # 使用默认的测试实例\n            logger.warning(\"No instance provided, using default test instance\")\n            self.load_default_instance()\n            \n        # 重置状态\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = list(range(len(self.parts)))\n        self.done = False\n        self.total_reward = 0\n        self.previous_layout_info = None\n        self.step_rewards = []\n        self.step_details = []\n        \n        return self._get_state()\n    \n    def load_instance(self, instance: Dict):\n        \"\"\"从实例数据加载bin和parts\"\"\"\n        # 设置容器\n        bin_width, bin_height = instance['bin']\n        self.bin_bounds = {\n            'x': 0, 'y': 0,\n            'width': bin_width,\n            'height': bin_height\n        }\n        \n        # 创建容器多边形\n        self.bin_polygon = [\n            {'x': 0, 'y': 0},\n            {'x': bin_width, 'y': 0},\n            {'x': bin_width, 'y': bin_height},\n            {'x': 0, 'y': bin_height},\n            {'x': 0, 'y': 0}\n        ]\n        \n        # 创建零件多边形 - 限制在最大数量内\n        self.parts = []\n        self.parts_info = []  # 存储原始的宽高信息\n        max_parts_to_load = min(len(instance['parts']), self.max_parts)\n        \n        for i, part in enumerate(instance['parts'][:max_parts_to_load]):\n            width, height = part\n            # 创建自定义列表类\n            CustomList = type('CustomList', (list,), {})\n            polygon = CustomList([\n                {'x': 0, 'y': 0},\n                {'x': width, 'y': 0},\n                {'x': width, 'y': height},\n                {'x': 0, 'y': height},\n                {'x': 0, 'y': 0}\n            ])\n            polygon.id = i\n            self.parts.append(polygon)\n            self.parts_info.append([width, height])\n            \n        self.num_parts = len(self.parts)\n        # --- 在这里添加日志打印 ---\n        # logger.info(f\"--- Instance Loaded --- True part count: {self.num_parts} (from instance with {len(instance['parts'])} parts)\")\n        # -------------------------\n        \n    def load_default_instance(self):\n        \"\"\"加载默认测试实例\"\"\"\n        default_instance = {\n            'bin': [100, 100],\n            'parts': [[20, 30], [25, 25], [15, 40], [30, 20], [10, 50]]\n        }\n        self.load_instance(default_instance)\n    \n    def step(self, action: int) -&gt; Tuple[np.ndarray, float, bool, Dict]:\n        \"\"\"执行一步动作 - 时序差分版本\"\"\"\n        if self.done:\n            return self._get_state(), 0, True, {}\n            \n        # 检查动作是否有效\n        if action &gt;= self.num_parts or action in self.placement_sequence:\n            # 无效动作，给予负奖励\n            reward = -1.0\n            info = {\n                'invalid_action': True,\n                'step': self.current_step,\n                'total_reward': self.total_reward\n            }\n            return self._get_state(), reward, self.done, info\n        \n        # 执行动作：将选中的零件添加到放置序列\n        self.placement_sequence.append(action)\n        if action in self.unplaced_parts:\n            self.unplaced_parts.remove(action)\n            \n        self.current_step += 1\n        \n        # 计算即时奖励\n        reward, reward_details = self._calculate_immediate_reward()\n        self.total_reward += reward\n        self.step_rewards.append(reward)\n        self.step_details.append(reward_details)\n        \n        # 更新previous_layout_info用于下一步计算\n        if 'layout_info' in reward_details:\n            self.previous_layout_info = reward_details['layout_info']\n        \n        # 检查是否结束\n        if len(self.placement_sequence) &gt;= self.num_parts or len(self.unplaced_parts) == 0:\n            self.done = True\n            \n        info = {\n            'step': self.current_step,\n            'placed_parts': len(self.placement_sequence),\n            'total_reward': self.total_reward,\n            'step_reward': reward,\n            'reward_details': reward_details,\n            'placement_sequence': self.placement_sequence.copy()\n        }\n        \n        return self._get_state(), reward, self.done, info\n    \n    def _calculate_immediate_reward(self) -&gt; Tuple[float, Dict]:\n        \"\"\"计算当前步骤的即时奖励\"\"\"\n        try:\n            reward, details = self.reward_calculator.calculate_step_reward(\n                bin_polygon=self.bin_polygon,\n                parts=self.parts,\n                placement_sequence=self.placement_sequence,\n                current_step=self.current_step - 1,  # 转换为0-based索引\n                previous_layout_info=self.previous_layout_info\n            )\n            return reward, details\n        except Exception as e:\n            logger.warning(f\"计算即时奖励时出错: {e}\")\n            return -1.0, {'error': str(e)}\n    \n    def _get_state(self) -&gt; np.ndarray:\n        \"\"\"\n        获取当前状态表示。\n        改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n        \n        state 维度: [max_parts, 5]\n        - 0: 归一化宽度 (width / 100)\n        - 1: 归一化高度 (height / 100)\n        - 2: 是否已放置 (is_placed: 0/1)\n        - 3: 当前材料利用率估计 (material_utilization)\n        - 4: 当前步数比例 (current_step / max(num_parts, 1))\n        \"\"\"\n        state = np.zeros((self.max_parts, 5), dtype=np.float32)\n        \n        # 基本几何信息：宽、高\n        for i, part_info in enumerate(self.parts_info):\n            if i &gt;= self.max_parts:\n                break\n            state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n            state[i, 1] = part_info[1] / 100.0  # 归一化高度\n        \n        # 是否已放置标记\n        if self.placement_sequence:\n            placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n            for idx in self.placement_sequence:\n                if 0 &lt;= idx &lt; self.max_parts:\n                    placed_flags[idx] = 1.0\n            state[:, 2] = placed_flags\n        \n        # 全局排样信息：材料利用率 + 步数比例\n        # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n        if hasattr(self, \"previous_layout_info\") and self.previous_layout_info is not None:\n            util = float(self.previous_layout_info.get(\"material_utilization\", 0.0))\n        else:\n            util = 0.0\n        step_ratio = 0.0\n        if self.num_parts &gt; 0:\n            step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n        \n        if self.num_parts &gt; 0:\n            state[: self.num_parts, 3] = util\n            state[: self.num_parts, 4] = step_ratio\n        \n        return state\n    \n    def get_valid_actions(self) -&gt; List[int]:\n        \"\"\"获取当前有效的动作\"\"\"\n        return self.unplaced_parts.copy()\n    \n    def is_action_valid(self, action: int) -&gt; bool:\n        \"\"\"检查动作是否有效\"\"\"\n        return action &lt; self.num_parts and action not in self.placement_sequence\n\n    def get_placement_metrics(self) -&gt; Dict:\n        \"\"\"获取当前排料指标\"\"\"\n        if len(self.placement_sequence) == 0:\n            return {\n                'material_utilization': 0.0,\n                'compactness': 0.0,\n                'bbox_ratio': 0.0,\n                'waste_area': 0.0,\n                'final_score': 0.0\n            }\n        \n        # 使用奖励计算器获取最终指标\n        final_metrics = self.reward_calculator.calculate_final_reward(\n            bin_polygon=self.bin_polygon,\n            parts=self.parts,\n            placement_sequence=self.placement_sequence\n        )\n        \n        return final_metrics\n\n    def render(self, mode='human'):\n        \"\"\"渲染环境状态\"\"\"\n        if mode == 'human':\n            print(f\"Step: {self.current_step}\")\n            print(f\"Placement sequence: {self.placement_sequence}\")\n            print(f\"Unplaced parts: {self.unplaced_parts}\")\n            print(f\"Total reward: {self.total_reward:.3f}\")\n            if self.step_rewards:\n                print(f\"Last step reward: {self.step_rewards[-1]:.3f}\")\n            print(\"-\" * 50)\n\n    def get_episode_summary(self) -&gt; Dict:\n        \"\"\"获取episode总结\"\"\"\n        final_metrics = self.get_placement_metrics()\n        \n        return {\n            'total_steps': self.current_step,\n            'total_reward': self.total_reward,\n            'average_step_reward': np.mean(self.step_rewards) if self.step_rewards else 0,\n            'placement_sequence': self.placement_sequence,\n            'final_metrics': final_metrics,\n            'step_rewards': self.step_rewards,\n            'num_parts': self.num_parts,\n            'success': len(self.placement_sequence) == self.num_parts\n        }\n\n    def update_reward_weights(self, w1: float, w2: float, w3: float):\n        \"\"\"更新奖励权重\"\"\"\n        self.reward_calculator.update_weights(w1, w2, w3)\n\n    def get_reward_weights(self) -&gt; Tuple[float, float, float]:\n        \"\"\"获取当前奖励权重\"\"\"\n        return self.reward_calculator.get_weights()\n\n\nclass TDDataLoader:\n    \"\"\"时序差分数据加载器\"\"\"\n    \n    def __init__(self, data_file: str, test_data_file: str = None):\n        self.data_file = data_file\n        self.test_data_file = test_data_file\n        self.instances = []\n        self.test_instances = []\n        self.load_data()\n        if test_data_file:\n            self.load_test_data()\n    \n    def load_data(self):\n        \"\"\"加载训练数据\"\"\"\n        try:\n            with open(self.data_file, 'r') as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 保留bin、parts和placement_order信息\n                    filtered_instance = {\n                        'bin': instance['bin'],\n                        'parts': instance['parts'],\n                        'placement_order': instance.get('placement_order', [])\n                    }\n                    self.instances.append(filtered_instance)\n            logger.info(f\"加载了 {len(self.instances)} 个训练实例\")\n        except Exception as e:\n            logger.error(f\"加载训练数据时出错: {e}\")\n            self.instances = []\n    \n    def load_test_data(self):\n        \"\"\"加载测试数据\"\"\"\n        try:\n            with open(self.test_data_file, 'r') as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 只保留bin和parts信息\n                    filtered_instance = {\n                        'bin': instance['bin'],\n                        'parts': instance['parts']\n                    }\n                    self.test_instances.append(filtered_instance)\n            logger.info(f\"加载了 {len(self.test_instances)} 个测试实例\")\n        except Exception as e:\n            logger.error(f\"加载测试数据时出错: {e}\")\n            self.test_instances = []\n    \n    def get_random_instance(self) -&gt; Dict:\n        \"\"\"获取随机训练实例\"\"\"\n        if not self.instances:\n            return None\n        return random.choice(self.instances)\n    \n    def get_instance(self, index: int) -&gt; Dict:\n        \"\"\"获取指定索引的训练实例\"\"\"\n        if 0 &lt;= index &lt; len(self.instances):\n            return self.instances[index]\n        return None\n    \n    def get_test_instance(self, index: int) -&gt; Dict:\n        \"\"\"获取指定索引的测试实例\"\"\"\n        if 0 &lt;= index &lt; len(self.test_instances):\n            return self.test_instances[index]\n        return None\n    \n    def get_test_instances(self, num_instances: int = 100) -&gt; List[Dict]:\n        \"\"\"获取指定数量的测试实例\"\"\"\n        if not self.test_instances:\n            return []\n        return self.test_instances[:min(num_instances, len(self.test_instances))]\n    \n    def __len__(self):\n        return len(self.instances) "
 }
 ```
 User decision: **accepted**
@@ -5213,37 +5213,37 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/ppo_trainer.py&quot;
+  "relativeWorkspacePath": "src/ppo_trainer.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;192dcc3a-d877-4d47-9a41-a6dedbab19f9&quot;
+  "codeblockId": "192dcc3a-d877-4d47-9a41-a6dedbab19f9"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;      \n      # --- Model Hyperparameters ---\n-     parser.add_argument(&#39;--input_dim&#39;, type=int, default=2)\n+     # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n+     parser.add_argument(&#39;--input_dim&#39;, type=int, default=5)\n      parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)\n      parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)&quot;,
-        &quot;oldStart&quot;: 377,
-        &quot;newStart&quot;: 377,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 6,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 2
+        "diffString": "      \n      # --- Model Hyperparameters ---\n-     parser.add_argument('--input_dim', type=int, default=2)\n+     # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n+     parser.add_argument('--input_dim', type=int, default=5)\n      parser.add_argument('--hidden_dim', type=int, default=128)\n      parser.add_argument('--max_seq_len', type=int, default=60)",
+        "oldStart": 377,
+        "newStart": 377,
+        "oldLines": 5,
+        "newLines": 6,
+        "linesRemoved": 1,
+        "linesAdded": 2
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/ppo_trainer.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;..&#39;))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\&quot;Warning: wandb not available. Install with: pip install wandb\&quot;)\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \&quot;\&quot;\&quot;\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \&quot;\&quot;\&quot;\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \&quot;\&quot;\&quot;\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \&quot;\&quot;\&quot;\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \&quot;\&quot;\&quot;\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \&quot;\&quot;\&quot;\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0][&#39;state&#39;].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep[&#39;rewards&#39;], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep[&#39;values&#39;], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep[&#39;state&#39;], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep[&#39;actions&#39;], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep[&#39;log_probs&#39;], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep[&#39;valid_length&#39;])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \&quot;\&quot;\&quot;主训练循环\&quot;\&quot;\&quot;\n        logger.info(\&quot;Starting PPO training loop (Trajectory-based)...\&quot;)\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    &#39;state&#39;: state_np, # 原始状态 (max_parts, 2)\n                    &#39;actions&#39;: ep_actions,\n                    &#39;log_probs&#39;: ep_log_probs,\n                    &#39;rewards&#39;: ep_rewards,\n                    &#39;values&#39;: ep_values,\n                    &#39;valid_length&#39;: valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get(&#39;material_utilization&#39;, 0)\n                    logger.info(f\&quot;Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\&quot;)\n                    if self.use_wandb:\n                        wandb.log({\&quot;rollout/ep_reward\&quot;: sum(ep_rewards), \&quot;rollout/ep_util\&quot;: util, \&quot;global_step\&quot;: self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\&quot;Starting PPO update...\&quot;)\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction=&#39;none&#39;)\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\&quot;Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\&quot;)\n            \n            if self.use_wandb:\n                wandb.log({\n                    \&quot;train/loss\&quot;: loss.item(),\n                    \&quot;train/policy_loss\&quot;: policy_loss.item(),\n                    \&quot;train/value_loss\&quot;: value_loss.item(),\n                    \&quot;train/entropy_loss\&quot;: entropy_loss.item(),\n                    \&quot;global_step\&quot;: self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\&quot;Evaluating at step {self.global_step}...\&quot;)\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get(&#39;material_utilization&#39;, 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\&quot;Eval Avg Util: {avg_util:.4f}\&quot;)\n        if self.use_wandb:\n            wandb.log({\&quot;eval/avg_util\&quot;: avg_util, \&quot;global_step\&quot;: self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = &#39;ppo_policy_best.pth&#39; if is_best else f&#39;ppo_policy_latest.pth&#39;\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            &#39;model_state_dict&#39;: self.policy.state_dict(),\n            &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),\n            &#39;args&#39;: self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description=&#39;PPO Trainer for 2D Nesting Problem&#39;)\n    \n    # --- Data and Paths ---\n    parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;)\n    parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)\n    parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models_ppo&#39;, help=&#39;Directory to save models&#39;)\n    parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs_ppo&#39;, help=&#39;Directory to save logs&#39;)\n    \n    # --- Model Hyperparameters ---\n    # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n    parser.add_argument(&#39;--input_dim&#39;, type=int, default=5)\n    parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)\n    parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument(&#39;--total_timesteps&#39;, type=int, default=1_000_000, help=&#39;Total timesteps to train the agent&#39;)\n    parser.add_argument(&#39;--learning_rate&#39;, type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument(&#39;--batch_size&#39;, type=int, default=16, help=&#39;Number of episodes per PPO update&#39;)\n    parser.add_argument(&#39;--n_epochs&#39;, type=int, default=4, help=&#39;Number of epochs to update the policy on the collected data&#39;)\n    parser.add_argument(&#39;--gamma&#39;, type=float, default=0.99)\n    parser.add_argument(&#39;--gae_lambda&#39;, type=float, default=0.95)\n    parser.add_argument(&#39;--clip_range&#39;, type=float, default=0.2)\n    parser.add_argument(&#39;--ent_coef&#39;, type=float, default=0.01, help=&#39;Entropy coefficient&#39;)\n    parser.add_argument(&#39;--vf_coef&#39;, type=float, default=0.5, help=&#39;Value function coefficient&#39;)\n    parser.add_argument(&#39;--max_grad_norm&#39;, type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    \n    # --- Training and Logging ---\n    parser.add_argument(&#39;--eval_interval&#39;, type=int, default=5000, help=&#39;Evaluate the agent every N steps&#39;)\n    parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=100)\n    parser.add_argument(&#39;--use_wandb&#39;, action=&#39;store_true&#39;, default=True, help=&#39;Use Weights &amp; Biases for logging&#39;)\n    parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;ppo_svgnest&#39;)\n    parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=f&#39;ppo_run_{time.strftime(\&quot;%Y%m%d-%H%M%S\&quot;)}&#39;)\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, &#39;train_ppo.log&#39;))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(levelname)s - %(message)s&#39;))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\&quot;Training arguments: {args}\&quot;)\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == &#39;__main__&#39;:\n    main()\n&quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/ppo_trainer.py",
+  "contentsAfterEdit": "import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\"Warning: wandb not available. Install with: pip install wandb\")\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \"\"\"\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \"\"\"\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \"\"\"\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \"\"\"\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \"\"\"\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \"\"\"\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0]['state'].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep['rewards'], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep['values'], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep['state'], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep['actions'], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep['log_probs'], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep['valid_length'])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \"\"\"主训练循环\"\"\"\n        logger.info(\"Starting PPO training loop (Trajectory-based)...\")\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    'state': state_np, # 原始状态 (max_parts, 2)\n                    'actions': ep_actions,\n                    'log_probs': ep_log_probs,\n                    'rewards': ep_rewards,\n                    'values': ep_values,\n                    'valid_length': valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get('material_utilization', 0)\n                    logger.info(f\"Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\")\n                    if self.use_wandb:\n                        wandb.log({\"rollout/ep_reward\": sum(ep_rewards), \"rollout/ep_util\": util, \"global_step\": self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\"Starting PPO update...\")\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction='none')\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\"Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\")\n            \n            if self.use_wandb:\n                wandb.log({\n                    \"train/loss\": loss.item(),\n                    \"train/policy_loss\": policy_loss.item(),\n                    \"train/value_loss\": value_loss.item(),\n                    \"train/entropy_loss\": entropy_loss.item(),\n                    \"global_step\": self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\"Evaluating at step {self.global_step}...\")\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get('material_utilization', 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\"Eval Avg Util: {avg_util:.4f}\")\n        if self.use_wandb:\n            wandb.log({\"eval/avg_util\": avg_util, \"global_step\": self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = 'ppo_policy_best.pth' if is_best else f'ppo_policy_latest.pth'\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            'model_state_dict': self.policy.state_dict(),\n            'optimizer_state_dict': self.optimizer.state_dict(),\n            'args': self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description='PPO Trainer for 2D Nesting Problem')\n    \n    # --- Data and Paths ---\n    parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl')\n    parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')\n    parser.add_argument('--output_dir', type=str, default='./models_ppo', help='Directory to save models')\n    parser.add_argument('--log_dir', type=str, default='./logs_ppo', help='Directory to save logs')\n    \n    # --- Model Hyperparameters ---\n    # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n    parser.add_argument('--input_dim', type=int, default=5)\n    parser.add_argument('--hidden_dim', type=int, default=128)\n    parser.add_argument('--max_seq_len', type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument('--total_timesteps', type=int, default=1_000_000, help='Total timesteps to train the agent')\n    parser.add_argument('--learning_rate', type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument('--batch_size', type=int, default=16, help='Number of episodes per PPO update')\n    parser.add_argument('--n_epochs', type=int, default=4, help='Number of epochs to update the policy on the collected data')\n    parser.add_argument('--gamma', type=float, default=0.99)\n    parser.add_argument('--gae_lambda', type=float, default=0.95)\n    parser.add_argument('--clip_range', type=float, default=0.2)\n    parser.add_argument('--ent_coef', type=float, default=0.01, help='Entropy coefficient')\n    parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function coefficient')\n    parser.add_argument('--max_grad_norm', type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    \n    # --- Training and Logging ---\n    parser.add_argument('--eval_interval', type=int, default=5000, help='Evaluate the agent every N steps')\n    parser.add_argument('--max_test_instances', type=int, default=100)\n    parser.add_argument('--use_wandb', action='store_true', default=True, help='Use Weights &amp; Biases for logging')\n    parser.add_argument('--wandb_project', type=str, default='ppo_svgnest')\n    parser.add_argument('--wandb_run_name', type=str, default=f'ppo_run_{time.strftime(\"%Y%m%d-%H%M%S\")}')\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, 'train_ppo.log'))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\"Training arguments: {args}\")\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == '__main__':\n    main()\n"
 }
 ```
 User decision: **accepted**
@@ -5265,37 +5265,37 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/td_trainer.py&quot;
+  "relativeWorkspacePath": "src/td_trainer.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;258388e5-d27a-4e2d-8b69-5c579d50e47d&quot;
+  "codeblockId": "258388e5-d27a-4e2d-8b69-5c579d50e47d"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;      \n      def __init__(self, \n-                  input_dim=2,\n+                  input_dim=5,\n                   hidden_dim=128,\n                   max_seq_len=60,&quot;,
-        &quot;oldStart&quot;: 30,
-        &quot;newStart&quot;: 30,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 5,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 1
+        "diffString": "      \n      def __init__(self, \n-                  input_dim=2,\n+                  input_dim=5,\n                   hidden_dim=128,\n                   max_seq_len=60,",
+        "oldStart": 30,
+        "newStart": 30,
+        "oldLines": 5,
+        "newLines": 5,
+        "linesRemoved": 1,
+        "linesAdded": 1
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/td_trainer.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport json\nimport os\nimport argparse\nimport time\nimport sys\n\n# 添加项目根目录到Python路径\nsys.path.append(os.path.join(os.path.dirname(__file__), &#39;..&#39;))\n\nfrom src.model.td_policy_network import TDPolicyNetwork\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\&quot;Warning: wandb not available. Install with: pip install wandb\&quot;)\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDTrainer:\n    \&quot;\&quot;\&quot;时序差分训练器 - 使用训练数据直接训练\&quot;\&quot;\&quot;\n    \n    def __init__(self, \n                 input_dim=5,\n                 hidden_dim=128,\n                 max_seq_len=60,\n                 learning_rate=3e-4,\n                 reward_weights=(0.4, 0.3, 0.3),\n                 use_baseline=True,\n                 clip_grad_norm=1.0,\n                 use_wandb=True,\n                 save_interval_steps=10000,\n                 output_dir=&#39;./models&#39;):\n        \&quot;\&quot;\&quot;\n        初始化训练器\n        \n        Args:\n            input_dim: 输入维度（零件特征维度）\n            hidden_dim: 隐藏层维度\n            max_seq_len: 最大序列长度\n            learning_rate: 学习率\n            reward_weights: 奖励权重\n            use_baseline: 是否使用baseline减少方差\n            clip_grad_norm: 梯度裁剪的最大范数\n            use_wandb: 是否使用wandb进行监控\n        \&quot;\&quot;\&quot;\n        self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)\n        self.learning_rate = learning_rate\n        self.use_baseline = use_baseline\n        self.clip_grad_norm = clip_grad_norm\n        self.use_wandb = use_wandb and WANDB_AVAILABLE\n        \n        logger.info(f\&quot;使用设备: {self.device}\&quot;)\n        \n        # 创建策略网络\n        self.policy_net = TDPolicyNetwork(input_dim, hidden_dim, max_seq_len).to(self.device)\n        \n        # 创建优化器\n        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)\n        \n        # 创建环境\n        self.env = TDEnvironment(max_parts=max_seq_len, reward_weights=reward_weights)\n        \n        # 基线值（用于减少方差）\n        self.baseline = 0.0\n        self.baseline_momentum = 0.9\n        \n        # 步数保存相关\n        self.save_interval_steps = save_interval_steps\n        self.output_dir = output_dir\n        self.global_step = 0\n        \n        # 训练统计\n        self.train_stats = {\n            &#39;episodes&#39;: 0,\n            &#39;total_loss&#39;: 0,\n            &#39;total_reward&#39;: 0,\n            &#39;losses&#39;: [],\n            &#39;rewards&#39;: [],\n            &#39;utilization_rates&#39;: [],\n            &#39;best_utilization&#39;: 0.0,\n            &#39;best_reward&#39;: float(&#39;-inf&#39;)\n        }\n        \n        logger.info(\&quot;TDTrainer初始化完成\&quot;)\n\n    def train_on_instance(self, instance: Dict) -&gt; Dict:\n        \&quot;\&quot;\&quot;在单个实例上训练\&quot;\&quot;\&quot;\n        # 重置环境\n        state = self.env.reset(instance)\n        \n        # 转换为tensor\n        parts_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)  # [1, seq_len, input_dim]\n        \n        # 使用模型预测动作序列（让模型学习策略）\n        actual_parts = min(self.env.num_parts, self.policy_net.seq_len)\n        \n        # 使用模型预测（不使用teacher forcing）\n        with torch.no_grad():\n            predicted_sequence = self.policy_net.predict(parts_tensor, \n                                                       valid_lengths=torch.tensor([actual_parts]))\n        \n        # 在环境中执行预测的序列，收集奖励\n        total_reward = 0\n        step_rewards = []\n        action_sequence = []\n        \n        # 重置环境以执行预测的动作\n        self.env.reset(instance)\n        \n        for step in range(actual_parts):\n            action = predicted_sequence[0, step].item()\n            \n            # 检查动作是否有效\n            if not self.env.is_action_valid(action):\n                # 如果动作无效，给予负奖励并跳过\n                reward = -1.0\n                step_rewards.append(reward)\n                total_reward += reward\n                continue\n            \n            # 执行动作获得奖励\n            _, reward, done, info = self.env.step(action)\n            total_reward += reward\n            step_rewards.append(reward)\n            action_sequence.append(action)\n            \n            if done:\n                break\n        \n        # 现在使用收集到的奖励来训练模型\n        # 重新进行前向传播以计算损失\n        target_sequence = torch.LongTensor([action_sequence]).to(self.device)\n        \n        if len(action_sequence) &gt; 0:\n            logits = self.policy_net(parts_tensor, target_sequence, \n                                   valid_lengths=torch.tensor([len(action_sequence)]))\n            \n            # 计算策略梯度损失\n            total_loss = 0\n            step_losses = []\n            \n            for step in range(len(action_sequence)):\n                action = action_sequence[step]\n                reward = step_rewards[step]\n                \n                # 计算策略损失\n                step_logits = logits[0, step, :actual_parts]  # 只取有效的零件数量\n                step_log_probs = torch.log_softmax(step_logits, dim=0)\n                action_log_prob = step_log_probs[action]\n                \n                # 策略梯度损失：-log_prob * (reward - baseline)\n                if self.use_baseline:\n                    advantage = reward - self.baseline\n                else:\n                    advantage = reward\n                    \n                step_loss = -action_log_prob * advantage\n                total_loss += step_loss\n                step_losses.append(step_loss.item())\n            \n            # 反向传播\n            self.optimizer.zero_grad()\n            total_loss.backward()\n            \n            # 梯度裁剪\n            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=self.clip_grad_norm)\n            \n            # 更新baseline\n            if self.use_baseline and len(step_rewards) &gt; 0:\n                current_return = sum(step_rewards) / len(step_rewards)\n                self.baseline = self.baseline_momentum * self.baseline + (1 - self.baseline_momentum) * current_return\n            \n            self.optimizer.step()\n        else:\n            total_loss = torch.tensor(0.0)\n            step_losses = []\n        \n        # 获取最终指标\n        final_metrics = self.env.get_placement_metrics()\n        \n        return {\n            &#39;loss&#39;: total_loss.item() if torch.is_tensor(total_loss) else total_loss,\n            &#39;reward&#39;: total_reward,\n            &#39;step_losses&#39;: step_losses,\n            &#39;step_rewards&#39;: step_rewards,\n            &#39;final_metrics&#39;: final_metrics,\n            &#39;num_steps&#39;: len(step_rewards),\n            &#39;baseline&#39;: self.baseline\n        }\n\n    def train_epoch(self, data_loader: TDDataLoader, epoch: int, max_instances: int = None, save_callback=None) -&gt; Dict:\n        \&quot;\&quot;\&quot;训练一个epoch\&quot;\&quot;\&quot;\n        self.policy_net.train()\n        \n        epoch_stats = {\n            &#39;total_loss&#39;: 0,\n            &#39;total_reward&#39;: 0,\n            &#39;num_instances&#39;: 0,\n            &#39;avg_utilization&#39;: 0,\n            &#39;instance_stats&#39;: [],\n            &#39;avg_baseline&#39;: 0\n        }\n        \n        # 限制训练实例数量\n        num_instances = min(len(data_loader), max_instances) if max_instances else len(data_loader)\n        \n        start_time = time.time()\n        \n        for i in range(num_instances):\n            instance = data_loader.get_instance(i)\n            if instance is None:\n                continue\n                \n            try:\n                # 训练单个实例\n                result = self.train_on_instance(instance)\n                \n                # 更新统计\n                epoch_stats[&#39;total_loss&#39;] += result[&#39;loss&#39;]\n                epoch_stats[&#39;total_reward&#39;] += result[&#39;reward&#39;]\n                epoch_stats[&#39;num_instances&#39;] += 1\n                epoch_stats[&#39;avg_baseline&#39;] += result[&#39;baseline&#39;]\n                \n                # 记录材料利用率\n                utilization = result[&#39;final_metrics&#39;].get(&#39;material_utilization&#39;, 0)\n                epoch_stats[&#39;avg_utilization&#39;] += utilization\n                \n                # 更新最佳记录\n                if utilization &gt; self.train_stats[&#39;best_utilization&#39;]:\n                    self.train_stats[&#39;best_utilization&#39;] = utilization\n                if result[&#39;reward&#39;] &gt; self.train_stats[&#39;best_reward&#39;]:\n                    self.train_stats[&#39;best_reward&#39;] = result[&#39;reward&#39;]\n                \n                # 记录实例统计\n                epoch_stats[&#39;instance_stats&#39;].append({\n                    &#39;instance_id&#39;: i,\n                    &#39;loss&#39;: result[&#39;loss&#39;],\n                    &#39;reward&#39;: result[&#39;reward&#39;],\n                    &#39;utilization&#39;: utilization,\n                    &#39;num_steps&#39;: result[&#39;num_steps&#39;]\n                })\n                \n                # 更新全局步数\n                self.global_step += 1\n                \n                # 检查是否需要保存模型\n                if self.global_step % self.save_interval_steps == 0 and save_callback:\n                    is_best = utilization &gt;= self.train_stats[&#39;best_utilization&#39;]\n                    save_callback(self.global_step, epoch, is_best)\n                \n                # 每100个实例打印一次进度\n                if (i + 1) % 100 == 0:\n                    avg_loss = epoch_stats[&#39;total_loss&#39;] / epoch_stats[&#39;num_instances&#39;]\n                    avg_reward = epoch_stats[&#39;total_reward&#39;] / epoch_stats[&#39;num_instances&#39;]\n                    avg_util = epoch_stats[&#39;avg_utilization&#39;] / epoch_stats[&#39;num_instances&#39;]\n                    avg_baseline = epoch_stats[&#39;avg_baseline&#39;] / epoch_stats[&#39;num_instances&#39;]\n                    \n                    logger.info(f\&quot;Epoch {epoch+1} - 进度 {i+1}/{num_instances}: \&quot;\n                              f\&quot;平均损失={avg_loss:.4f}, \&quot;\n                              f\&quot;平均奖励={avg_reward:.4f}, \&quot;\n                              f\&quot;平均利用率={avg_util:.3f}, \&quot;\n                              f\&quot;基线值={avg_baseline:.4f}\&quot;)\n                    \n                    # 记录到wandb\n                    if self.use_wandb:\n                        wandb.log({\n                            &#39;train/step_loss&#39;: avg_loss,\n                            &#39;train/step_reward&#39;: avg_reward,\n                            &#39;train/step_utilization&#39;: avg_util,\n                            &#39;train/baseline&#39;: avg_baseline,\n                            &#39;train/progress&#39;: (i + 1) / num_instances\n                        })\n                \n            except Exception as e:\n                logger.warning(f\&quot;训练实例 {i} 时出错: {e}\&quot;)\n                continue\n        \n        # 计算平均值\n        if epoch_stats[&#39;num_instances&#39;] &gt; 0:\n            epoch_stats[&#39;avg_loss&#39;] = epoch_stats[&#39;total_loss&#39;] / epoch_stats[&#39;num_instances&#39;]\n            epoch_stats[&#39;avg_reward&#39;] = epoch_stats[&#39;total_reward&#39;] / epoch_stats[&#39;num_instances&#39;]\n            epoch_stats[&#39;avg_utilization&#39;] = epoch_stats[&#39;avg_utilization&#39;] / epoch_stats[&#39;num_instances&#39;]\n            epoch_stats[&#39;avg_baseline&#39;] = epoch_stats[&#39;avg_baseline&#39;] / epoch_stats[&#39;num_instances&#39;]\n        else:\n            # 如果没有成功的实例，设置默认值\n            epoch_stats[&#39;avg_loss&#39;] = 0.0\n            epoch_stats[&#39;avg_reward&#39;] = 0.0\n            epoch_stats[&#39;avg_utilization&#39;] = 0.0\n            epoch_stats[&#39;avg_baseline&#39;] = 0.0\n        \n        epoch_stats[&#39;epoch_time&#39;] = time.time() - start_time\n        \n        return epoch_stats\n\n    def evaluate(self, data_loader: TDDataLoader, num_instances: int = 100) -&gt; Dict:\n        \&quot;\&quot;\&quot;评估模型\&quot;\&quot;\&quot;\n        self.policy_net.eval()\n        \n        eval_stats = {\n            &#39;total_reward&#39;: 0,\n            &#39;avg_reward&#39;: 0,\n            &#39;avg_utilization&#39;: 0,\n            &#39;num_instances&#39;: 0,\n            &#39;results&#39;: [],\n            &#39;best_utilization&#39;: 0.0,\n            &#39;worst_utilization&#39;: 1.0\n        }\n        \n        start_time = time.time()\n        \n        with torch.no_grad():\n            for i in range(min(num_instances, len(data_loader))):\n                instance = data_loader.get_test_instance(i) if hasattr(data_loader, &#39;get_test_instance&#39;) else data_loader.get_instance(i)\n                if instance is None:\n                    continue\n                    \n                try:\n                    # 重置环境\n                    state = self.env.reset(instance)\n                    parts_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)\n                    \n                    # 使用贪心策略预测\n                    predictions = self.policy_net.predict(parts_tensor, \n                                                        valid_lengths=torch.tensor([self.env.num_parts]))\n                    \n                    # 在环境中执行预测的序列\n                    total_reward = 0\n                    for step in range(self.env.num_parts):\n                        action = predictions[0, step].item()\n                        if self.env.is_action_valid(action):\n                            _, reward, done, _ = self.env.step(action)\n                            total_reward += reward\n                            if done:\n                                break\n                    \n                    # 获取最终指标\n                    final_metrics = self.env.get_placement_metrics()\n                    utilization = final_metrics.get(&#39;material_utilization&#39;, 0)\n                    \n                    eval_stats[&#39;total_reward&#39;] += total_reward\n                    eval_stats[&#39;avg_utilization&#39;] += utilization\n                    eval_stats[&#39;num_instances&#39;] += 1\n                    \n                    # 更新最佳和最差记录\n                    if utilization &gt; eval_stats[&#39;best_utilization&#39;]:\n                        eval_stats[&#39;best_utilization&#39;] = utilization\n                    if utilization &lt; eval_stats[&#39;worst_utilization&#39;]:\n                        eval_stats[&#39;worst_utilization&#39;] = utilization\n                    \n                    eval_stats[&#39;results&#39;].append({\n                        &#39;instance_id&#39;: i,\n                        &#39;reward&#39;: total_reward,\n                        &#39;utilization&#39;: utilization,\n                        &#39;final_metrics&#39;: final_metrics\n                    })\n                    \n                except Exception as e:\n                    logger.warning(f\&quot;评估实例 {i} 时出错: {e}\&quot;)\n                    continue\n        \n        # 计算平均值\n        if eval_stats[&#39;num_instances&#39;] &gt; 0:\n            eval_stats[&#39;avg_reward&#39;] = eval_stats[&#39;total_reward&#39;] / eval_stats[&#39;num_instances&#39;]\n            eval_stats[&#39;avg_utilization&#39;] = eval_stats[&#39;avg_utilization&#39;] / eval_stats[&#39;num_instances&#39;]\n        \n        eval_stats[&#39;eval_time&#39;] = time.time() - start_time\n        \n        return eval_stats\n\n    def save_model(self, filepath: str, epoch: int = None, is_best: bool = False):\n        \&quot;\&quot;\&quot;保存模型\&quot;\&quot;\&quot;\n        checkpoint = {\n            &#39;model_state_dict&#39;: self.policy_net.state_dict(),\n            &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),\n            &#39;train_stats&#39;: self.train_stats,\n            &#39;baseline&#39;: self.baseline,\n            &#39;epoch&#39;: epoch,\n            &#39;learning_rate&#39;: self.learning_rate\n        }\n        \n        torch.save(checkpoint, filepath)\n        logger.info(f\&quot;模型已保存到: {filepath}\&quot;)\n        \n        # 如果是最佳模型，也保存一个best.pth的副本\n        if is_best:\n            best_path = filepath.replace(&#39;.pth&#39;, &#39;_best.pth&#39;)\n            torch.save(checkpoint, best_path)\n            logger.info(f\&quot;最佳模型已保存到: {best_path}\&quot;)\n\n    def load_model(self, filepath: str):\n        \&quot;\&quot;\&quot;加载模型\&quot;\&quot;\&quot;\n        checkpoint = torch.load(filepath, map_location=self.device)\n        self.policy_net.load_state_dict(checkpoint[&#39;model_state_dict&#39;])\n        self.optimizer.load_state_dict(checkpoint[&#39;optimizer_state_dict&#39;])\n        self.train_stats = checkpoint.get(&#39;train_stats&#39;, self.train_stats)\n        self.baseline = checkpoint.get(&#39;baseline&#39;, self.baseline)\n        logger.info(f\&quot;模型已从 {filepath} 加载\&quot;)\n\n\ndef parse_args():\n    \&quot;\&quot;\&quot;解析命令行参数\&quot;\&quot;\&quot;\n    parser = argparse.ArgumentParser(description=&#39;时序差分策略学习训练&#39;)\n    \n    # 数据相关参数\n    parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;,\n                        help=&#39;训练数据文件路径&#39;)\n    parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;,\n                        help=&#39;测试数据文件路径&#39;)\n    parser.add_argument(&#39;--max_train_instances&#39;, type=int, default=50000,\n                        help=&#39;最大训练实例数&#39;)\n    parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=2000,\n                        help=&#39;最大测试实例数&#39;)\n    \n    # 模型相关参数\n    parser.add_argument(&#39;--input_dim&#39;, type=int, default=2,\n                        help=&#39;输入特征维度&#39;)\n    parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128,\n                        help=&#39;隐藏层维度&#39;)\n    parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60,\n                        help=&#39;最大序列长度&#39;)\n    \n    # 训练相关参数\n    parser.add_argument(&#39;--learning_rate&#39;, type=float, default=3e-4,\n                        help=&#39;学习率&#39;)\n    parser.add_argument(&#39;--num_epochs&#39;, type=int, default=100,\n                        help=&#39;训练轮数&#39;)\n    parser.add_argument(&#39;--clip_grad_norm&#39;, type=float, default=1.0,\n                        help=&#39;梯度裁剪最大范数&#39;)\n    parser.add_argument(&#39;--use_baseline&#39;, default=True,\n                        help=&#39;是否使用baseline减少方差&#39;)\n    \n    # 奖励权重\n    parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.4, 0.3, 0.3],\n                        help=&#39;奖励权重 [紧凑度, 贴合度, 利用率]&#39;)\n    \n    # 输出相关参数\n    parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models&#39;,\n                        help=&#39;模型保存目录&#39;)\n    parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs&#39;,\n                        help=&#39;日志保存目录&#39;)\n    parser.add_argument(&#39;--save_interval&#39;, type=int, default=10,\n                        help=&#39;模型保存间隔（轮数）&#39;)\n    parser.add_argument(&#39;--save_interval_steps&#39;, type=int, default=10000,\n                        help=&#39;模型保存间隔（步数）&#39;)\n    \n    # wandb相关参数\n    parser.add_argument(&#39;--use_wandb&#39;, default=True,\n                        help=&#39;是否使用wandb记录&#39;)\n    parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;td_svgnest&#39;,\n                        help=&#39;wandb项目名称&#39;)\n    parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=None,\n                        help=&#39;wandb运行名称&#39;)\n    \n    return parser.parse_args()\n\n\ndef main():\n    \&quot;\&quot;\&quot;主训练函数\&quot;\&quot;\&quot;\n    args = parse_args()\n    \n    # 设置日志\n    os.makedirs(args.log_dir, exist_ok=True)\n    logging.basicConfig(\n        level=logging.INFO,\n        format=&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;,\n        handlers=[\n            logging.FileHandler(os.path.join(args.log_dir, &#39;train.log&#39;)),\n            logging.StreamHandler()\n        ]\n    )\n    \n    logger.info(f\&quot;训练参数: {args}\&quot;)\n    \n    # 初始化wandb\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # 检查数据文件\n    if not os.path.exists(args.train_file):\n        logger.error(f\&quot;训练数据文件不存在: {args.train_file}\&quot;)\n        return\n    \n    # 创建数据加载器\n    train_loader = TDDataLoader(args.train_file)\n    logger.info(f\&quot;加载了 {len(train_loader)} 个训练实例\&quot;)\n    \n    # 创建测试数据加载器\n    test_loader = None\n    if os.path.exists(args.test_file):\n        test_loader = TDDataLoader(args.train_file, args.test_file)\n        logger.info(f\&quot;加载了 {len(test_loader.test_instances)} 个测试实例\&quot;)\n    else:\n        logger.warning(f\&quot;测试数据文件不存在: {args.test_file}\&quot;)\n    \n    # 创建训练器\n    trainer = TDTrainer(\n        input_dim=args.input_dim,\n        hidden_dim=args.hidden_dim,\n        max_seq_len=args.max_seq_len,\n        learning_rate=args.learning_rate,\n        reward_weights=tuple(args.reward_weights),\n        use_baseline=args.use_baseline,\n        clip_grad_norm=args.clip_grad_norm,\n        use_wandb=args.use_wandb,\n        save_interval_steps=args.save_interval_steps,\n        output_dir=args.output_dir\n    )\n    \n    # 创建输出目录\n    os.makedirs(args.output_dir, exist_ok=True)\n    \n    # 创建保存回调函数\n    def save_model_callback(step, epoch, is_best=False):\n        model_path = os.path.join(args.output_dir, f&#39;td_policy_step_{step}.pth&#39;)\n        trainer.save_model(model_path, epoch=epoch, is_best=is_best)\n        logger.info(f\&quot;在步数 {step} 保存模型: {model_path}\&quot;)\n    \n    # 训练循环\n    best_test_util = 0.0\n    for epoch in range(args.num_epochs):\n        logger.info(f\&quot;开始第 {epoch + 1}/{args.num_epochs} 轮训练...\&quot;)\n        \n        # 训练一个epoch\n        train_stats = trainer.train_epoch(train_loader, epoch, max_instances=args.max_train_instances, save_callback=save_model_callback)\n        \n        logger.info(f\&quot;第 {epoch + 1} 轮训练完成:\&quot;)\n        logger.info(f\&quot;  平均损失: {train_stats[&#39;avg_loss&#39;]:.4f}\&quot;)\n        logger.info(f\&quot;  平均奖励: {train_stats[&#39;avg_reward&#39;]:.4f}\&quot;)\n        logger.info(f\&quot;  平均利用率: {train_stats[&#39;avg_utilization&#39;]:.3f}\&quot;)\n        logger.info(f\&quot;  训练时间: {train_stats[&#39;epoch_time&#39;]:.2f}s\&quot;)\n        \n        # 评估测试集\n        if test_loader is not None:\n            test_stats = trainer.evaluate(test_loader, num_instances=args.max_test_instances)\n            logger.info(f\&quot;测试集评估结果:\&quot;)\n            logger.info(f\&quot;  平均奖励: {test_stats[&#39;avg_reward&#39;]:.4f}\&quot;)\n            logger.info(f\&quot;  平均利用率: {test_stats[&#39;avg_utilization&#39;]:.3f}\&quot;)\n            logger.info(f\&quot;  最佳利用率: {test_stats[&#39;best_utilization&#39;]:.3f}\&quot;)\n            logger.info(f\&quot;  评估时间: {test_stats[&#39;eval_time&#39;]:.2f}s\&quot;)\n            \n            # 记录到wandb\n            if args.use_wandb and WANDB_AVAILABLE:\n                wandb.log({\n                    &#39;epoch&#39;: epoch + 1,\n                    &#39;train/loss&#39;: train_stats[&#39;avg_loss&#39;],\n                    &#39;train/reward&#39;: train_stats[&#39;avg_reward&#39;],\n                    &#39;train/utilization&#39;: train_stats[&#39;avg_utilization&#39;],\n                    &#39;train/baseline&#39;: train_stats[&#39;avg_baseline&#39;],\n                    &#39;train/epoch_time&#39;: train_stats[&#39;epoch_time&#39;],\n                    &#39;test/reward&#39;: test_stats[&#39;avg_reward&#39;],\n                    &#39;test/utilization&#39;: test_stats[&#39;avg_utilization&#39;],\n                    &#39;test/best_utilization&#39;: test_stats[&#39;best_utilization&#39;],\n                    &#39;test/eval_time&#39;: test_stats[&#39;eval_time&#39;],\n                    &#39;best/train_utilization&#39;: trainer.train_stats[&#39;best_utilization&#39;],\n                    &#39;best/train_reward&#39;: trainer.train_stats[&#39;best_reward&#39;]\n                })\n            \n            # 保存最佳模型\n            is_best = test_stats[&#39;avg_utilization&#39;] &gt; best_test_util\n            if is_best:\n                best_test_util = test_stats[&#39;avg_utilization&#39;]\n                \n        else:\n            # 记录到wandb（仅训练数据）\n            if args.use_wandb and WANDB_AVAILABLE:\n                wandb.log({\n                    &#39;epoch&#39;: epoch + 1,\n                    &#39;train/loss&#39;: train_stats[&#39;avg_loss&#39;],\n                    &#39;train/reward&#39;: train_stats[&#39;avg_reward&#39;],\n                    &#39;train/utilization&#39;: train_stats[&#39;avg_utilization&#39;],\n                    &#39;train/baseline&#39;: train_stats[&#39;avg_baseline&#39;],\n                    &#39;train/epoch_time&#39;: train_stats[&#39;epoch_time&#39;],\n                    &#39;best/train_utilization&#39;: trainer.train_stats[&#39;best_utilization&#39;],\n                    &#39;best/train_reward&#39;: trainer.train_stats[&#39;best_reward&#39;]\n                })\n            \n            is_best = train_stats[&#39;avg_utilization&#39;] &gt;= trainer.train_stats[&#39;best_utilization&#39;]\n        \n        # 保存模型\n        if (epoch + 1) % args.save_interval == 0 or epoch == args.num_epochs - 1:\n            model_path = os.path.join(args.output_dir, f&#39;td_policy_epoch_{epoch + 1}.pth&#39;)\n            trainer.save_model(model_path, epoch=epoch + 1, is_best=is_best)\n    \n    logger.info(\&quot;训练完成!\&quot;)\n    \n    # 关闭wandb\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\n\nif __name__ == &#39;__main__&#39;:\n    main()&quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/td_trainer.py",
+  "contentsAfterEdit": "import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport json\nimport os\nimport argparse\nimport time\nimport sys\n\n# 添加项目根目录到Python路径\nsys.path.append(os.path.join(os.path.dirname(__file__), '..'))\n\nfrom src.model.td_policy_network import TDPolicyNetwork\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\"Warning: wandb not available. Install with: pip install wandb\")\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDTrainer:\n    \"\"\"时序差分训练器 - 使用训练数据直接训练\"\"\"\n    \n    def __init__(self, \n                 input_dim=5,\n                 hidden_dim=128,\n                 max_seq_len=60,\n                 learning_rate=3e-4,\n                 reward_weights=(0.4, 0.3, 0.3),\n                 use_baseline=True,\n                 clip_grad_norm=1.0,\n                 use_wandb=True,\n                 save_interval_steps=10000,\n                 output_dir='./models'):\n        \"\"\"\n        初始化训练器\n        \n        Args:\n            input_dim: 输入维度（零件特征维度）\n            hidden_dim: 隐藏层维度\n            max_seq_len: 最大序列长度\n            learning_rate: 学习率\n            reward_weights: 奖励权重\n            use_baseline: 是否使用baseline减少方差\n            clip_grad_norm: 梯度裁剪的最大范数\n            use_wandb: 是否使用wandb进行监控\n        \"\"\"\n        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n        self.learning_rate = learning_rate\n        self.use_baseline = use_baseline\n        self.clip_grad_norm = clip_grad_norm\n        self.use_wandb = use_wandb and WANDB_AVAILABLE\n        \n        logger.info(f\"使用设备: {self.device}\")\n        \n        # 创建策略网络\n        self.policy_net = TDPolicyNetwork(input_dim, hidden_dim, max_seq_len).to(self.device)\n        \n        # 创建优化器\n        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)\n        \n        # 创建环境\n        self.env = TDEnvironment(max_parts=max_seq_len, reward_weights=reward_weights)\n        \n        # 基线值（用于减少方差）\n        self.baseline = 0.0\n        self.baseline_momentum = 0.9\n        \n        # 步数保存相关\n        self.save_interval_steps = save_interval_steps\n        self.output_dir = output_dir\n        self.global_step = 0\n        \n        # 训练统计\n        self.train_stats = {\n            'episodes': 0,\n            'total_loss': 0,\n            'total_reward': 0,\n            'losses': [],\n            'rewards': [],\n            'utilization_rates': [],\n            'best_utilization': 0.0,\n            'best_reward': float('-inf')\n        }\n        \n        logger.info(\"TDTrainer初始化完成\")\n\n    def train_on_instance(self, instance: Dict) -&gt; Dict:\n        \"\"\"在单个实例上训练\"\"\"\n        # 重置环境\n        state = self.env.reset(instance)\n        \n        # 转换为tensor\n        parts_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)  # [1, seq_len, input_dim]\n        \n        # 使用模型预测动作序列（让模型学习策略）\n        actual_parts = min(self.env.num_parts, self.policy_net.seq_len)\n        \n        # 使用模型预测（不使用teacher forcing）\n        with torch.no_grad():\n            predicted_sequence = self.policy_net.predict(parts_tensor, \n                                                       valid_lengths=torch.tensor([actual_parts]))\n        \n        # 在环境中执行预测的序列，收集奖励\n        total_reward = 0\n        step_rewards = []\n        action_sequence = []\n        \n        # 重置环境以执行预测的动作\n        self.env.reset(instance)\n        \n        for step in range(actual_parts):\n            action = predicted_sequence[0, step].item()\n            \n            # 检查动作是否有效\n            if not self.env.is_action_valid(action):\n                # 如果动作无效，给予负奖励并跳过\n                reward = -1.0\n                step_rewards.append(reward)\n                total_reward += reward\n                continue\n            \n            # 执行动作获得奖励\n            _, reward, done, info = self.env.step(action)\n            total_reward += reward\n            step_rewards.append(reward)\n            action_sequence.append(action)\n            \n            if done:\n                break\n        \n        # 现在使用收集到的奖励来训练模型\n        # 重新进行前向传播以计算损失\n        target_sequence = torch.LongTensor([action_sequence]).to(self.device)\n        \n        if len(action_sequence) &gt; 0:\n            logits = self.policy_net(parts_tensor, target_sequence, \n                                   valid_lengths=torch.tensor([len(action_sequence)]))\n            \n            # 计算策略梯度损失\n            total_loss = 0\n            step_losses = []\n            \n            for step in range(len(action_sequence)):\n                action = action_sequence[step]\n                reward = step_rewards[step]\n                \n                # 计算策略损失\n                step_logits = logits[0, step, :actual_parts]  # 只取有效的零件数量\n                step_log_probs = torch.log_softmax(step_logits, dim=0)\n                action_log_prob = step_log_probs[action]\n                \n                # 策略梯度损失：-log_prob * (reward - baseline)\n                if self.use_baseline:\n                    advantage = reward - self.baseline\n                else:\n                    advantage = reward\n                    \n                step_loss = -action_log_prob * advantage\n                total_loss += step_loss\n                step_losses.append(step_loss.item())\n            \n            # 反向传播\n            self.optimizer.zero_grad()\n            total_loss.backward()\n            \n            # 梯度裁剪\n            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=self.clip_grad_norm)\n            \n            # 更新baseline\n            if self.use_baseline and len(step_rewards) &gt; 0:\n                current_return = sum(step_rewards) / len(step_rewards)\n                self.baseline = self.baseline_momentum * self.baseline + (1 - self.baseline_momentum) * current_return\n            \n            self.optimizer.step()\n        else:\n            total_loss = torch.tensor(0.0)\n            step_losses = []\n        \n        # 获取最终指标\n        final_metrics = self.env.get_placement_metrics()\n        \n        return {\n            'loss': total_loss.item() if torch.is_tensor(total_loss) else total_loss,\n            'reward': total_reward,\n            'step_losses': step_losses,\n            'step_rewards': step_rewards,\n            'final_metrics': final_metrics,\n            'num_steps': len(step_rewards),\n            'baseline': self.baseline\n        }\n\n    def train_epoch(self, data_loader: TDDataLoader, epoch: int, max_instances: int = None, save_callback=None) -&gt; Dict:\n        \"\"\"训练一个epoch\"\"\"\n        self.policy_net.train()\n        \n        epoch_stats = {\n            'total_loss': 0,\n            'total_reward': 0,\n            'num_instances': 0,\n            'avg_utilization': 0,\n            'instance_stats': [],\n            'avg_baseline': 0\n        }\n        \n        # 限制训练实例数量\n        num_instances = min(len(data_loader), max_instances) if max_instances else len(data_loader)\n        \n        start_time = time.time()\n        \n        for i in range(num_instances):\n            instance = data_loader.get_instance(i)\n            if instance is None:\n                continue\n                \n            try:\n                # 训练单个实例\n                result = self.train_on_instance(instance)\n                \n                # 更新统计\n                epoch_stats['total_loss'] += result['loss']\n                epoch_stats['total_reward'] += result['reward']\n                epoch_stats['num_instances'] += 1\n                epoch_stats['avg_baseline'] += result['baseline']\n                \n                # 记录材料利用率\n                utilization = result['final_metrics'].get('material_utilization', 0)\n                epoch_stats['avg_utilization'] += utilization\n                \n                # 更新最佳记录\n                if utilization &gt; self.train_stats['best_utilization']:\n                    self.train_stats['best_utilization'] = utilization\n                if result['reward'] &gt; self.train_stats['best_reward']:\n                    self.train_stats['best_reward'] = result['reward']\n                \n                # 记录实例统计\n                epoch_stats['instance_stats'].append({\n                    'instance_id': i,\n                    'loss': result['loss'],\n                    'reward': result['reward'],\n                    'utilization': utilization,\n                    'num_steps': result['num_steps']\n                })\n                \n                # 更新全局步数\n                self.global_step += 1\n                \n                # 检查是否需要保存模型\n                if self.global_step % self.save_interval_steps == 0 and save_callback:\n                    is_best = utilization &gt;= self.train_stats['best_utilization']\n                    save_callback(self.global_step, epoch, is_best)\n                \n                # 每100个实例打印一次进度\n                if (i + 1) % 100 == 0:\n                    avg_loss = epoch_stats['total_loss'] / epoch_stats['num_instances']\n                    avg_reward = epoch_stats['total_reward'] / epoch_stats['num_instances']\n                    avg_util = epoch_stats['avg_utilization'] / epoch_stats['num_instances']\n                    avg_baseline = epoch_stats['avg_baseline'] / epoch_stats['num_instances']\n                    \n                    logger.info(f\"Epoch {epoch+1} - 进度 {i+1}/{num_instances}: \"\n                              f\"平均损失={avg_loss:.4f}, \"\n                              f\"平均奖励={avg_reward:.4f}, \"\n                              f\"平均利用率={avg_util:.3f}, \"\n                              f\"基线值={avg_baseline:.4f}\")\n                    \n                    # 记录到wandb\n                    if self.use_wandb:\n                        wandb.log({\n                            'train/step_loss': avg_loss,\n                            'train/step_reward': avg_reward,\n                            'train/step_utilization': avg_util,\n                            'train/baseline': avg_baseline,\n                            'train/progress': (i + 1) / num_instances\n                        })\n                \n            except Exception as e:\n                logger.warning(f\"训练实例 {i} 时出错: {e}\")\n                continue\n        \n        # 计算平均值\n        if epoch_stats['num_instances'] &gt; 0:\n            epoch_stats['avg_loss'] = epoch_stats['total_loss'] / epoch_stats['num_instances']\n            epoch_stats['avg_reward'] = epoch_stats['total_reward'] / epoch_stats['num_instances']\n            epoch_stats['avg_utilization'] = epoch_stats['avg_utilization'] / epoch_stats['num_instances']\n            epoch_stats['avg_baseline'] = epoch_stats['avg_baseline'] / epoch_stats['num_instances']\n        else:\n            # 如果没有成功的实例，设置默认值\n            epoch_stats['avg_loss'] = 0.0\n            epoch_stats['avg_reward'] = 0.0\n            epoch_stats['avg_utilization'] = 0.0\n            epoch_stats['avg_baseline'] = 0.0\n        \n        epoch_stats['epoch_time'] = time.time() - start_time\n        \n        return epoch_stats\n\n    def evaluate(self, data_loader: TDDataLoader, num_instances: int = 100) -&gt; Dict:\n        \"\"\"评估模型\"\"\"\n        self.policy_net.eval()\n        \n        eval_stats = {\n            'total_reward': 0,\n            'avg_reward': 0,\n            'avg_utilization': 0,\n            'num_instances': 0,\n            'results': [],\n            'best_utilization': 0.0,\n            'worst_utilization': 1.0\n        }\n        \n        start_time = time.time()\n        \n        with torch.no_grad():\n            for i in range(min(num_instances, len(data_loader))):\n                instance = data_loader.get_test_instance(i) if hasattr(data_loader, 'get_test_instance') else data_loader.get_instance(i)\n                if instance is None:\n                    continue\n                    \n                try:\n                    # 重置环境\n                    state = self.env.reset(instance)\n                    parts_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)\n                    \n                    # 使用贪心策略预测\n                    predictions = self.policy_net.predict(parts_tensor, \n                                                        valid_lengths=torch.tensor([self.env.num_parts]))\n                    \n                    # 在环境中执行预测的序列\n                    total_reward = 0\n                    for step in range(self.env.num_parts):\n                        action = predictions[0, step].item()\n                        if self.env.is_action_valid(action):\n                            _, reward, done, _ = self.env.step(action)\n                            total_reward += reward\n                            if done:\n                                break\n                    \n                    # 获取最终指标\n                    final_metrics = self.env.get_placement_metrics()\n                    utilization = final_metrics.get('material_utilization', 0)\n                    \n                    eval_stats['total_reward'] += total_reward\n                    eval_stats['avg_utilization'] += utilization\n                    eval_stats['num_instances'] += 1\n                    \n                    # 更新最佳和最差记录\n                    if utilization &gt; eval_stats['best_utilization']:\n                        eval_stats['best_utilization'] = utilization\n                    if utilization &lt; eval_stats['worst_utilization']:\n                        eval_stats['worst_utilization'] = utilization\n                    \n                    eval_stats['results'].append({\n                        'instance_id': i,\n                        'reward': total_reward,\n                        'utilization': utilization,\n                        'final_metrics': final_metrics\n                    })\n                    \n                except Exception as e:\n                    logger.warning(f\"评估实例 {i} 时出错: {e}\")\n                    continue\n        \n        # 计算平均值\n        if eval_stats['num_instances'] &gt; 0:\n            eval_stats['avg_reward'] = eval_stats['total_reward'] / eval_stats['num_instances']\n            eval_stats['avg_utilization'] = eval_stats['avg_utilization'] / eval_stats['num_instances']\n        \n        eval_stats['eval_time'] = time.time() - start_time\n        \n        return eval_stats\n\n    def save_model(self, filepath: str, epoch: int = None, is_best: bool = False):\n        \"\"\"保存模型\"\"\"\n        checkpoint = {\n            'model_state_dict': self.policy_net.state_dict(),\n            'optimizer_state_dict': self.optimizer.state_dict(),\n            'train_stats': self.train_stats,\n            'baseline': self.baseline,\n            'epoch': epoch,\n            'learning_rate': self.learning_rate\n        }\n        \n        torch.save(checkpoint, filepath)\n        logger.info(f\"模型已保存到: {filepath}\")\n        \n        # 如果是最佳模型，也保存一个best.pth的副本\n        if is_best:\n            best_path = filepath.replace('.pth', '_best.pth')\n            torch.save(checkpoint, best_path)\n            logger.info(f\"最佳模型已保存到: {best_path}\")\n\n    def load_model(self, filepath: str):\n        \"\"\"加载模型\"\"\"\n        checkpoint = torch.load(filepath, map_location=self.device)\n        self.policy_net.load_state_dict(checkpoint['model_state_dict'])\n        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])\n        self.train_stats = checkpoint.get('train_stats', self.train_stats)\n        self.baseline = checkpoint.get('baseline', self.baseline)\n        logger.info(f\"模型已从 {filepath} 加载\")\n\n\ndef parse_args():\n    \"\"\"解析命令行参数\"\"\"\n    parser = argparse.ArgumentParser(description='时序差分策略学习训练')\n    \n    # 数据相关参数\n    parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl',\n                        help='训练数据文件路径')\n    parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl',\n                        help='测试数据文件路径')\n    parser.add_argument('--max_train_instances', type=int, default=50000,\n                        help='最大训练实例数')\n    parser.add_argument('--max_test_instances', type=int, default=2000,\n                        help='最大测试实例数')\n    \n    # 模型相关参数\n    parser.add_argument('--input_dim', type=int, default=2,\n                        help='输入特征维度')\n    parser.add_argument('--hidden_dim', type=int, default=128,\n                        help='隐藏层维度')\n    parser.add_argument('--max_seq_len', type=int, default=60,\n                        help='最大序列长度')\n    \n    # 训练相关参数\n    parser.add_argument('--learning_rate', type=float, default=3e-4,\n                        help='学习率')\n    parser.add_argument('--num_epochs', type=int, default=100,\n                        help='训练轮数')\n    parser.add_argument('--clip_grad_norm', type=float, default=1.0,\n                        help='梯度裁剪最大范数')\n    parser.add_argument('--use_baseline', default=True,\n                        help='是否使用baseline减少方差')\n    \n    # 奖励权重\n    parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.4, 0.3, 0.3],\n                        help='奖励权重 [紧凑度, 贴合度, 利用率]')\n    \n    # 输出相关参数\n    parser.add_argument('--output_dir', type=str, default='./models',\n                        help='模型保存目录')\n    parser.add_argument('--log_dir', type=str, default='./logs',\n                        help='日志保存目录')\n    parser.add_argument('--save_interval', type=int, default=10,\n                        help='模型保存间隔（轮数）')\n    parser.add_argument('--save_interval_steps', type=int, default=10000,\n                        help='模型保存间隔（步数）')\n    \n    # wandb相关参数\n    parser.add_argument('--use_wandb', default=True,\n                        help='是否使用wandb记录')\n    parser.add_argument('--wandb_project', type=str, default='td_svgnest',\n                        help='wandb项目名称')\n    parser.add_argument('--wandb_run_name', type=str, default=None,\n                        help='wandb运行名称')\n    \n    return parser.parse_args()\n\n\ndef main():\n    \"\"\"主训练函数\"\"\"\n    args = parse_args()\n    \n    # 设置日志\n    os.makedirs(args.log_dir, exist_ok=True)\n    logging.basicConfig(\n        level=logging.INFO,\n        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',\n        handlers=[\n            logging.FileHandler(os.path.join(args.log_dir, 'train.log')),\n            logging.StreamHandler()\n        ]\n    )\n    \n    logger.info(f\"训练参数: {args}\")\n    \n    # 初始化wandb\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # 检查数据文件\n    if not os.path.exists(args.train_file):\n        logger.error(f\"训练数据文件不存在: {args.train_file}\")\n        return\n    \n    # 创建数据加载器\n    train_loader = TDDataLoader(args.train_file)\n    logger.info(f\"加载了 {len(train_loader)} 个训练实例\")\n    \n    # 创建测试数据加载器\n    test_loader = None\n    if os.path.exists(args.test_file):\n        test_loader = TDDataLoader(args.train_file, args.test_file)\n        logger.info(f\"加载了 {len(test_loader.test_instances)} 个测试实例\")\n    else:\n        logger.warning(f\"测试数据文件不存在: {args.test_file}\")\n    \n    # 创建训练器\n    trainer = TDTrainer(\n        input_dim=args.input_dim,\n        hidden_dim=args.hidden_dim,\n        max_seq_len=args.max_seq_len,\n        learning_rate=args.learning_rate,\n        reward_weights=tuple(args.reward_weights),\n        use_baseline=args.use_baseline,\n        clip_grad_norm=args.clip_grad_norm,\n        use_wandb=args.use_wandb,\n        save_interval_steps=args.save_interval_steps,\n        output_dir=args.output_dir\n    )\n    \n    # 创建输出目录\n    os.makedirs(args.output_dir, exist_ok=True)\n    \n    # 创建保存回调函数\n    def save_model_callback(step, epoch, is_best=False):\n        model_path = os.path.join(args.output_dir, f'td_policy_step_{step}.pth')\n        trainer.save_model(model_path, epoch=epoch, is_best=is_best)\n        logger.info(f\"在步数 {step} 保存模型: {model_path}\")\n    \n    # 训练循环\n    best_test_util = 0.0\n    for epoch in range(args.num_epochs):\n        logger.info(f\"开始第 {epoch + 1}/{args.num_epochs} 轮训练...\")\n        \n        # 训练一个epoch\n        train_stats = trainer.train_epoch(train_loader, epoch, max_instances=args.max_train_instances, save_callback=save_model_callback)\n        \n        logger.info(f\"第 {epoch + 1} 轮训练完成:\")\n        logger.info(f\"  平均损失: {train_stats['avg_loss']:.4f}\")\n        logger.info(f\"  平均奖励: {train_stats['avg_reward']:.4f}\")\n        logger.info(f\"  平均利用率: {train_stats['avg_utilization']:.3f}\")\n        logger.info(f\"  训练时间: {train_stats['epoch_time']:.2f}s\")\n        \n        # 评估测试集\n        if test_loader is not None:\n            test_stats = trainer.evaluate(test_loader, num_instances=args.max_test_instances)\n            logger.info(f\"测试集评估结果:\")\n            logger.info(f\"  平均奖励: {test_stats['avg_reward']:.4f}\")\n            logger.info(f\"  平均利用率: {test_stats['avg_utilization']:.3f}\")\n            logger.info(f\"  最佳利用率: {test_stats['best_utilization']:.3f}\")\n            logger.info(f\"  评估时间: {test_stats['eval_time']:.2f}s\")\n            \n            # 记录到wandb\n            if args.use_wandb and WANDB_AVAILABLE:\n                wandb.log({\n                    'epoch': epoch + 1,\n                    'train/loss': train_stats['avg_loss'],\n                    'train/reward': train_stats['avg_reward'],\n                    'train/utilization': train_stats['avg_utilization'],\n                    'train/baseline': train_stats['avg_baseline'],\n                    'train/epoch_time': train_stats['epoch_time'],\n                    'test/reward': test_stats['avg_reward'],\n                    'test/utilization': test_stats['avg_utilization'],\n                    'test/best_utilization': test_stats['best_utilization'],\n                    'test/eval_time': test_stats['eval_time'],\n                    'best/train_utilization': trainer.train_stats['best_utilization'],\n                    'best/train_reward': trainer.train_stats['best_reward']\n                })\n            \n            # 保存最佳模型\n            is_best = test_stats['avg_utilization'] &gt; best_test_util\n            if is_best:\n                best_test_util = test_stats['avg_utilization']\n                \n        else:\n            # 记录到wandb（仅训练数据）\n            if args.use_wandb and WANDB_AVAILABLE:\n                wandb.log({\n                    'epoch': epoch + 1,\n                    'train/loss': train_stats['avg_loss'],\n                    'train/reward': train_stats['avg_reward'],\n                    'train/utilization': train_stats['avg_utilization'],\n                    'train/baseline': train_stats['avg_baseline'],\n                    'train/epoch_time': train_stats['epoch_time'],\n                    'best/train_utilization': trainer.train_stats['best_utilization'],\n                    'best/train_reward': trainer.train_stats['best_reward']\n                })\n            \n            is_best = train_stats['avg_utilization'] &gt;= trainer.train_stats['best_utilization']\n        \n        # 保存模型\n        if (epoch + 1) % args.save_interval == 0 or epoch == args.num_epochs - 1:\n            model_path = os.path.join(args.output_dir, f'td_policy_epoch_{epoch + 1}.pth')\n            trainer.save_model(model_path, epoch=epoch + 1, is_best=is_best)\n    \n    logger.info(\"训练完成!\")\n    \n    # 关闭wandb\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\n\nif __name__ == '__main__':\n    main()"
 }
 ```
 User decision: **accepted**
@@ -5489,46 +5489,46 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/environment/td_environment.py&quot;
+  "relativeWorkspacePath": "src/environment/td_environment.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;2074371e-ab45-4c89-a409-bfd7f4590856&quot;
+  "codeblockId": "2074371e-ab45-4c89-a409-bfd7f4590856"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;      \&quot;\&quot;\&quot;时序差分环境 - 支持即时奖励计算和PlacementWorker集成\&quot;\&quot;\&quot;\n      \n-     def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3)):\n+     def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3), rule_weight: float = 0.1):\n          \&quot;\&quot;\&quot;\n          初始化环境&quot;,
-        &quot;oldStart&quot;: 20,
-        &quot;newStart&quot;: 20,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 5,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 1
+        "diffString": "      \"\"\"时序差分环境 - 支持即时奖励计算和PlacementWorker集成\"\"\"\n      \n-     def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3)):\n+     def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3), rule_weight: float = 0.1):\n          \"\"\"\n          初始化环境",
+        "oldStart": 20,
+        "newStart": 20,
+        "oldLines": 5,
+        "newLines": 5,
+        "linesRemoved": 1,
+        "linesAdded": 1
       },
       {
-        &quot;diffString&quot;: &quot;              w1=reward_weights[0], \n              w2=reward_weights[1], \n-             w3=reward_weights[2]\n+             w3=reward_weights[2],\n+             rule_weight=rule_weight\n          )\n  &quot;,
-        &quot;oldStart&quot;: 34,
-        &quot;newStart&quot;: 34,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 6,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 2
+        "diffString": "              w1=reward_weights[0], \n              w2=reward_weights[1], \n-             w3=reward_weights[2]\n+             w3=reward_weights[2],\n+             rule_weight=rule_weight\n          )\n  ",
+        "oldStart": 34,
+        "newStart": 34,
+        "oldLines": 5,
+        "newLines": 6,
+        "linesRemoved": 1,
+        "linesAdded": 2
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/environment/td_environment.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import numpy as np\nimport torch\nimport sys\nimport os\nimport logging\nfrom typing import List, Dict, Any, Tuple, Optional\nimport random\nimport json\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;../..&#39;))\n\nfrom src.reward.td_reward_calculator import TDRewardCalculator\n\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDEnvironment:\n    \&quot;\&quot;\&quot;时序差分环境 - 支持即时奖励计算和PlacementWorker集成\&quot;\&quot;\&quot;\n    \n    def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3), rule_weight: float = 0.1):\n        \&quot;\&quot;\&quot;\n        初始化环境\n        \n        Args:\n            max_parts: 最大零件数量\n            reward_weights: 三维奖励权重 (紧凑度, 贴合度, 材料利用率)\n        \&quot;\&quot;\&quot;\n        self.max_parts = max_parts\n        \n        # 初始化奖励计算器\n        self.reward_calculator = TDRewardCalculator(\n            w1=reward_weights[0], \n            w2=reward_weights[1], \n            w3=reward_weights[2],\n            rule_weight=rule_weight\n        )\n\n        # 只初始化状态变量\n        self.bin_polygon = None\n        self.parts = []\n        self.parts_info = []\n        self.num_parts = 0\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = []\n        self.done = False\n        # -----------------\n        \n        logger.info(f\&quot;TDEnvironment initialized with max_parts={max_parts}\&quot;)\n\n    def reset(self, instance: Optional[Dict] = None) -&gt; np.ndarray:\n        \&quot;\&quot;\&quot;重置环境\&quot;\&quot;\&quot;\n        if instance is not None:\n            self.load_instance(instance)\n        else:\n            # 使用默认的测试实例\n            logger.warning(\&quot;No instance provided, using default test instance\&quot;)\n            self.load_default_instance()\n            \n        # 重置状态\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = list(range(len(self.parts)))\n        self.done = False\n        self.total_reward = 0\n        self.previous_layout_info = None\n        self.step_rewards = []\n        self.step_details = []\n        \n        return self._get_state()\n    \n    def load_instance(self, instance: Dict):\n        \&quot;\&quot;\&quot;从实例数据加载bin和parts\&quot;\&quot;\&quot;\n        # 设置容器\n        bin_width, bin_height = instance[&#39;bin&#39;]\n        self.bin_bounds = {\n            &#39;x&#39;: 0, &#39;y&#39;: 0,\n            &#39;width&#39;: bin_width,\n            &#39;height&#39;: bin_height\n        }\n        \n        # 创建容器多边形\n        self.bin_polygon = [\n            {&#39;x&#39;: 0, &#39;y&#39;: 0},\n            {&#39;x&#39;: bin_width, &#39;y&#39;: 0},\n            {&#39;x&#39;: bin_width, &#39;y&#39;: bin_height},\n            {&#39;x&#39;: 0, &#39;y&#39;: bin_height},\n            {&#39;x&#39;: 0, &#39;y&#39;: 0}\n        ]\n        \n        # 创建零件多边形 - 限制在最大数量内\n        self.parts = []\n        self.parts_info = []  # 存储原始的宽高信息\n        max_parts_to_load = min(len(instance[&#39;parts&#39;]), self.max_parts)\n        \n        for i, part in enumerate(instance[&#39;parts&#39;][:max_parts_to_load]):\n            width, height = part\n            # 创建自定义列表类\n            CustomList = type(&#39;CustomList&#39;, (list,), {})\n            polygon = CustomList([\n                {&#39;x&#39;: 0, &#39;y&#39;: 0},\n                {&#39;x&#39;: width, &#39;y&#39;: 0},\n                {&#39;x&#39;: width, &#39;y&#39;: height},\n                {&#39;x&#39;: 0, &#39;y&#39;: height},\n                {&#39;x&#39;: 0, &#39;y&#39;: 0}\n            ])\n            polygon.id = i\n            self.parts.append(polygon)\n            self.parts_info.append([width, height])\n            \n        self.num_parts = len(self.parts)\n        # --- 在这里添加日志打印 ---\n        # logger.info(f\&quot;--- Instance Loaded --- True part count: {self.num_parts} (from instance with {len(instance[&#39;parts&#39;])} parts)\&quot;)\n        # -------------------------\n        \n    def load_default_instance(self):\n        \&quot;\&quot;\&quot;加载默认测试实例\&quot;\&quot;\&quot;\n        default_instance = {\n            &#39;bin&#39;: [100, 100],\n            &#39;parts&#39;: [[20, 30], [25, 25], [15, 40], [30, 20], [10, 50]]\n        }\n        self.load_instance(default_instance)\n    \n    def step(self, action: int) -&gt; Tuple[np.ndarray, float, bool, Dict]:\n        \&quot;\&quot;\&quot;执行一步动作 - 时序差分版本\&quot;\&quot;\&quot;\n        if self.done:\n            return self._get_state(), 0, True, {}\n            \n        # 检查动作是否有效\n        if action &gt;= self.num_parts or action in self.placement_sequence:\n            # 无效动作，给予负奖励\n            reward = -1.0\n            info = {\n                &#39;invalid_action&#39;: True,\n                &#39;step&#39;: self.current_step,\n                &#39;total_reward&#39;: self.total_reward\n            }\n            return self._get_state(), reward, self.done, info\n        \n        # 执行动作：将选中的零件添加到放置序列\n        self.placement_sequence.append(action)\n        if action in self.unplaced_parts:\n            self.unplaced_parts.remove(action)\n            \n        self.current_step += 1\n        \n        # 计算即时奖励\n        reward, reward_details = self._calculate_immediate_reward()\n        self.total_reward += reward\n        self.step_rewards.append(reward)\n        self.step_details.append(reward_details)\n        \n        # 更新previous_layout_info用于下一步计算\n        if &#39;layout_info&#39; in reward_details:\n            self.previous_layout_info = reward_details[&#39;layout_info&#39;]\n        \n        # 检查是否结束\n        if len(self.placement_sequence) &gt;= self.num_parts or len(self.unplaced_parts) == 0:\n            self.done = True\n            \n        info = {\n            &#39;step&#39;: self.current_step,\n            &#39;placed_parts&#39;: len(self.placement_sequence),\n            &#39;total_reward&#39;: self.total_reward,\n            &#39;step_reward&#39;: reward,\n            &#39;reward_details&#39;: reward_details,\n            &#39;placement_sequence&#39;: self.placement_sequence.copy()\n        }\n        \n        return self._get_state(), reward, self.done, info\n    \n    def _calculate_immediate_reward(self) -&gt; Tuple[float, Dict]:\n        \&quot;\&quot;\&quot;计算当前步骤的即时奖励\&quot;\&quot;\&quot;\n        try:\n            reward, details = self.reward_calculator.calculate_step_reward(\n                bin_polygon=self.bin_polygon,\n                parts=self.parts,\n                placement_sequence=self.placement_sequence,\n                current_step=self.current_step - 1,  # 转换为0-based索引\n                previous_layout_info=self.previous_layout_info\n            )\n            return reward, details\n        except Exception as e:\n            logger.warning(f\&quot;计算即时奖励时出错: {e}\&quot;)\n            return -1.0, {&#39;error&#39;: str(e)}\n    \n    def _get_state(self) -&gt; np.ndarray:\n        \&quot;\&quot;\&quot;\n        获取当前状态表示。\n        改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n        \n        state 维度: [max_parts, 5]\n        - 0: 归一化宽度 (width / 100)\n        - 1: 归一化高度 (height / 100)\n        - 2: 是否已放置 (is_placed: 0/1)\n        - 3: 当前材料利用率估计 (material_utilization)\n        - 4: 当前步数比例 (current_step / max(num_parts, 1))\n        \&quot;\&quot;\&quot;\n        state = np.zeros((self.max_parts, 5), dtype=np.float32)\n        \n        # 基本几何信息：宽、高\n        for i, part_info in enumerate(self.parts_info):\n            if i &gt;= self.max_parts:\n                break\n            state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n            state[i, 1] = part_info[1] / 100.0  # 归一化高度\n        \n        # 是否已放置标记\n        if self.placement_sequence:\n            placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n            for idx in self.placement_sequence:\n                if 0 &lt;= idx &lt; self.max_parts:\n                    placed_flags[idx] = 1.0\n            state[:, 2] = placed_flags\n        \n        # 全局排样信息：材料利用率 + 步数比例\n        # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n        if hasattr(self, \&quot;previous_layout_info\&quot;) and self.previous_layout_info is not None:\n            util = float(self.previous_layout_info.get(\&quot;material_utilization\&quot;, 0.0))\n        else:\n            util = 0.0\n        step_ratio = 0.0\n        if self.num_parts &gt; 0:\n            step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n        \n        if self.num_parts &gt; 0:\n            state[: self.num_parts, 3] = util\n            state[: self.num_parts, 4] = step_ratio\n        \n        return state\n    \n    def get_valid_actions(self) -&gt; List[int]:\n        \&quot;\&quot;\&quot;获取当前有效的动作\&quot;\&quot;\&quot;\n        return self.unplaced_parts.copy()\n    \n    def is_action_valid(self, action: int) -&gt; bool:\n        \&quot;\&quot;\&quot;检查动作是否有效\&quot;\&quot;\&quot;\n        return action &lt; self.num_parts and action not in self.placement_sequence\n\n    def get_placement_metrics(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取当前排料指标\&quot;\&quot;\&quot;\n        if len(self.placement_sequence) == 0:\n            return {\n                &#39;material_utilization&#39;: 0.0,\n                &#39;compactness&#39;: 0.0,\n                &#39;bbox_ratio&#39;: 0.0,\n                &#39;waste_area&#39;: 0.0,\n                &#39;final_score&#39;: 0.0\n            }\n        \n        # 使用奖励计算器获取最终指标\n        final_metrics = self.reward_calculator.calculate_final_reward(\n            bin_polygon=self.bin_polygon,\n            parts=self.parts,\n            placement_sequence=self.placement_sequence\n        )\n        \n        return final_metrics\n\n    def render(self, mode=&#39;human&#39;):\n        \&quot;\&quot;\&quot;渲染环境状态\&quot;\&quot;\&quot;\n        if mode == &#39;human&#39;:\n            print(f\&quot;Step: {self.current_step}\&quot;)\n            print(f\&quot;Placement sequence: {self.placement_sequence}\&quot;)\n            print(f\&quot;Unplaced parts: {self.unplaced_parts}\&quot;)\n            print(f\&quot;Total reward: {self.total_reward:.3f}\&quot;)\n            if self.step_rewards:\n                print(f\&quot;Last step reward: {self.step_rewards[-1]:.3f}\&quot;)\n            print(\&quot;-\&quot; * 50)\n\n    def get_episode_summary(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取episode总结\&quot;\&quot;\&quot;\n        final_metrics = self.get_placement_metrics()\n        \n        return {\n            &#39;total_steps&#39;: self.current_step,\n            &#39;total_reward&#39;: self.total_reward,\n            &#39;average_step_reward&#39;: np.mean(self.step_rewards) if self.step_rewards else 0,\n            &#39;placement_sequence&#39;: self.placement_sequence,\n            &#39;final_metrics&#39;: final_metrics,\n            &#39;step_rewards&#39;: self.step_rewards,\n            &#39;num_parts&#39;: self.num_parts,\n            &#39;success&#39;: len(self.placement_sequence) == self.num_parts\n        }\n\n    def update_reward_weights(self, w1: float, w2: float, w3: float):\n        \&quot;\&quot;\&quot;更新奖励权重\&quot;\&quot;\&quot;\n        self.reward_calculator.update_weights(w1, w2, w3)\n\n    def get_reward_weights(self) -&gt; Tuple[float, float, float]:\n        \&quot;\&quot;\&quot;获取当前奖励权重\&quot;\&quot;\&quot;\n        return self.reward_calculator.get_weights()\n\n\nclass TDDataLoader:\n    \&quot;\&quot;\&quot;时序差分数据加载器\&quot;\&quot;\&quot;\n    \n    def __init__(self, data_file: str, test_data_file: str = None):\n        self.data_file = data_file\n        self.test_data_file = test_data_file\n        self.instances = []\n        self.test_instances = []\n        self.load_data()\n        if test_data_file:\n            self.load_test_data()\n    \n    def load_data(self):\n        \&quot;\&quot;\&quot;加载训练数据\&quot;\&quot;\&quot;\n        try:\n            with open(self.data_file, &#39;r&#39;) as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 保留bin、parts和placement_order信息\n                    filtered_instance = {\n                        &#39;bin&#39;: instance[&#39;bin&#39;],\n                        &#39;parts&#39;: instance[&#39;parts&#39;],\n                        &#39;placement_order&#39;: instance.get(&#39;placement_order&#39;, [])\n                    }\n                    self.instances.append(filtered_instance)\n            logger.info(f\&quot;加载了 {len(self.instances)} 个训练实例\&quot;)\n        except Exception as e:\n            logger.error(f\&quot;加载训练数据时出错: {e}\&quot;)\n            self.instances = []\n    \n    def load_test_data(self):\n        \&quot;\&quot;\&quot;加载测试数据\&quot;\&quot;\&quot;\n        try:\n            with open(self.test_data_file, &#39;r&#39;) as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 只保留bin和parts信息\n                    filtered_instance = {\n                        &#39;bin&#39;: instance[&#39;bin&#39;],\n                        &#39;parts&#39;: instance[&#39;parts&#39;]\n                    }\n                    self.test_instances.append(filtered_instance)\n            logger.info(f\&quot;加载了 {len(self.test_instances)} 个测试实例\&quot;)\n        except Exception as e:\n            logger.error(f\&quot;加载测试数据时出错: {e}\&quot;)\n            self.test_instances = []\n    \n    def get_random_instance(self) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取随机训练实例\&quot;\&quot;\&quot;\n        if not self.instances:\n            return None\n        return random.choice(self.instances)\n    \n    def get_instance(self, index: int) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取指定索引的训练实例\&quot;\&quot;\&quot;\n        if 0 &lt;= index &lt; len(self.instances):\n            return self.instances[index]\n        return None\n    \n    def get_test_instance(self, index: int) -&gt; Dict:\n        \&quot;\&quot;\&quot;获取指定索引的测试实例\&quot;\&quot;\&quot;\n        if 0 &lt;= index &lt; len(self.test_instances):\n            return self.test_instances[index]\n        return None\n    \n    def get_test_instances(self, num_instances: int = 100) -&gt; List[Dict]:\n        \&quot;\&quot;\&quot;获取指定数量的测试实例\&quot;\&quot;\&quot;\n        if not self.test_instances:\n            return []\n        return self.test_instances[:min(num_instances, len(self.test_instances))]\n    \n    def __len__(self):\n        return len(self.instances) &quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/environment/td_environment.py",
+  "contentsAfterEdit": "import numpy as np\nimport torch\nimport sys\nimport os\nimport logging\nfrom typing import List, Dict, Any, Tuple, Optional\nimport random\nimport json\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))\n\nfrom src.reward.td_reward_calculator import TDRewardCalculator\n\n\nlogger = logging.getLogger(__name__)\n\n\nclass TDEnvironment:\n    \"\"\"时序差分环境 - 支持即时奖励计算和PlacementWorker集成\"\"\"\n    \n    def __init__(self, max_parts=60, reward_weights=(0.4, 0.3, 0.3), rule_weight: float = 0.1):\n        \"\"\"\n        初始化环境\n        \n        Args:\n            max_parts: 最大零件数量\n            reward_weights: 三维奖励权重 (紧凑度, 贴合度, 材料利用率)\n        \"\"\"\n        self.max_parts = max_parts\n        \n        # 初始化奖励计算器\n        self.reward_calculator = TDRewardCalculator(\n            w1=reward_weights[0], \n            w2=reward_weights[1], \n            w3=reward_weights[2],\n            rule_weight=rule_weight\n        )\n\n        # 只初始化状态变量\n        self.bin_polygon = None\n        self.parts = []\n        self.parts_info = []\n        self.num_parts = 0\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = []\n        self.done = False\n        # -----------------\n        \n        logger.info(f\"TDEnvironment initialized with max_parts={max_parts}\")\n\n    def reset(self, instance: Optional[Dict] = None) -&gt; np.ndarray:\n        \"\"\"重置环境\"\"\"\n        if instance is not None:\n            self.load_instance(instance)\n        else:\n            # 使用默认的测试实例\n            logger.warning(\"No instance provided, using default test instance\")\n            self.load_default_instance()\n            \n        # 重置状态\n        self.current_step = 0\n        self.placement_sequence = []\n        self.unplaced_parts = list(range(len(self.parts)))\n        self.done = False\n        self.total_reward = 0\n        self.previous_layout_info = None\n        self.step_rewards = []\n        self.step_details = []\n        \n        return self._get_state()\n    \n    def load_instance(self, instance: Dict):\n        \"\"\"从实例数据加载bin和parts\"\"\"\n        # 设置容器\n        bin_width, bin_height = instance['bin']\n        self.bin_bounds = {\n            'x': 0, 'y': 0,\n            'width': bin_width,\n            'height': bin_height\n        }\n        \n        # 创建容器多边形\n        self.bin_polygon = [\n            {'x': 0, 'y': 0},\n            {'x': bin_width, 'y': 0},\n            {'x': bin_width, 'y': bin_height},\n            {'x': 0, 'y': bin_height},\n            {'x': 0, 'y': 0}\n        ]\n        \n        # 创建零件多边形 - 限制在最大数量内\n        self.parts = []\n        self.parts_info = []  # 存储原始的宽高信息\n        max_parts_to_load = min(len(instance['parts']), self.max_parts)\n        \n        for i, part in enumerate(instance['parts'][:max_parts_to_load]):\n            width, height = part\n            # 创建自定义列表类\n            CustomList = type('CustomList', (list,), {})\n            polygon = CustomList([\n                {'x': 0, 'y': 0},\n                {'x': width, 'y': 0},\n                {'x': width, 'y': height},\n                {'x': 0, 'y': height},\n                {'x': 0, 'y': 0}\n            ])\n            polygon.id = i\n            self.parts.append(polygon)\n            self.parts_info.append([width, height])\n            \n        self.num_parts = len(self.parts)\n        # --- 在这里添加日志打印 ---\n        # logger.info(f\"--- Instance Loaded --- True part count: {self.num_parts} (from instance with {len(instance['parts'])} parts)\")\n        # -------------------------\n        \n    def load_default_instance(self):\n        \"\"\"加载默认测试实例\"\"\"\n        default_instance = {\n            'bin': [100, 100],\n            'parts': [[20, 30], [25, 25], [15, 40], [30, 20], [10, 50]]\n        }\n        self.load_instance(default_instance)\n    \n    def step(self, action: int) -&gt; Tuple[np.ndarray, float, bool, Dict]:\n        \"\"\"执行一步动作 - 时序差分版本\"\"\"\n        if self.done:\n            return self._get_state(), 0, True, {}\n            \n        # 检查动作是否有效\n        if action &gt;= self.num_parts or action in self.placement_sequence:\n            # 无效动作，给予负奖励\n            reward = -1.0\n            info = {\n                'invalid_action': True,\n                'step': self.current_step,\n                'total_reward': self.total_reward\n            }\n            return self._get_state(), reward, self.done, info\n        \n        # 执行动作：将选中的零件添加到放置序列\n        self.placement_sequence.append(action)\n        if action in self.unplaced_parts:\n            self.unplaced_parts.remove(action)\n            \n        self.current_step += 1\n        \n        # 计算即时奖励\n        reward, reward_details = self._calculate_immediate_reward()\n        self.total_reward += reward\n        self.step_rewards.append(reward)\n        self.step_details.append(reward_details)\n        \n        # 更新previous_layout_info用于下一步计算\n        if 'layout_info' in reward_details:\n            self.previous_layout_info = reward_details['layout_info']\n        \n        # 检查是否结束\n        if len(self.placement_sequence) &gt;= self.num_parts or len(self.unplaced_parts) == 0:\n            self.done = True\n            \n        info = {\n            'step': self.current_step,\n            'placed_parts': len(self.placement_sequence),\n            'total_reward': self.total_reward,\n            'step_reward': reward,\n            'reward_details': reward_details,\n            'placement_sequence': self.placement_sequence.copy()\n        }\n        \n        return self._get_state(), reward, self.done, info\n    \n    def _calculate_immediate_reward(self) -&gt; Tuple[float, Dict]:\n        \"\"\"计算当前步骤的即时奖励\"\"\"\n        try:\n            reward, details = self.reward_calculator.calculate_step_reward(\n                bin_polygon=self.bin_polygon,\n                parts=self.parts,\n                placement_sequence=self.placement_sequence,\n                current_step=self.current_step - 1,  # 转换为0-based索引\n                previous_layout_info=self.previous_layout_info\n            )\n            return reward, details\n        except Exception as e:\n            logger.warning(f\"计算即时奖励时出错: {e}\")\n            return -1.0, {'error': str(e)}\n    \n    def _get_state(self) -&gt; np.ndarray:\n        \"\"\"\n        获取当前状态表示。\n        改进版：不仅包含零件尺寸，还编码“是否已放置”和全局排样信息。\n        \n        state 维度: [max_parts, 5]\n        - 0: 归一化宽度 (width / 100)\n        - 1: 归一化高度 (height / 100)\n        - 2: 是否已放置 (is_placed: 0/1)\n        - 3: 当前材料利用率估计 (material_utilization)\n        - 4: 当前步数比例 (current_step / max(num_parts, 1))\n        \"\"\"\n        state = np.zeros((self.max_parts, 5), dtype=np.float32)\n        \n        # 基本几何信息：宽、高\n        for i, part_info in enumerate(self.parts_info):\n            if i &gt;= self.max_parts:\n                break\n            state[i, 0] = part_info[0] / 100.0  # 归一化宽度\n            state[i, 1] = part_info[1] / 100.0  # 归一化高度\n        \n        # 是否已放置标记\n        if self.placement_sequence:\n            placed_flags = np.zeros(self.max_parts, dtype=np.float32)\n            for idx in self.placement_sequence:\n                if 0 &lt;= idx &lt; self.max_parts:\n                    placed_flags[idx] = 1.0\n            state[:, 2] = placed_flags\n        \n        # 全局排样信息：材料利用率 + 步数比例\n        # 利用率：优先使用上一 step 的布局信息，如果还没有则为 0\n        if hasattr(self, \"previous_layout_info\") and self.previous_layout_info is not None:\n            util = float(self.previous_layout_info.get(\"material_utilization\", 0.0))\n        else:\n            util = 0.0\n        step_ratio = 0.0\n        if self.num_parts &gt; 0:\n            step_ratio = float(self.current_step) / float(max(self.num_parts, 1))\n        \n        if self.num_parts &gt; 0:\n            state[: self.num_parts, 3] = util\n            state[: self.num_parts, 4] = step_ratio\n        \n        return state\n    \n    def get_valid_actions(self) -&gt; List[int]:\n        \"\"\"获取当前有效的动作\"\"\"\n        return self.unplaced_parts.copy()\n    \n    def is_action_valid(self, action: int) -&gt; bool:\n        \"\"\"检查动作是否有效\"\"\"\n        return action &lt; self.num_parts and action not in self.placement_sequence\n\n    def get_placement_metrics(self) -&gt; Dict:\n        \"\"\"获取当前排料指标\"\"\"\n        if len(self.placement_sequence) == 0:\n            return {\n                'material_utilization': 0.0,\n                'compactness': 0.0,\n                'bbox_ratio': 0.0,\n                'waste_area': 0.0,\n                'final_score': 0.0\n            }\n        \n        # 使用奖励计算器获取最终指标\n        final_metrics = self.reward_calculator.calculate_final_reward(\n            bin_polygon=self.bin_polygon,\n            parts=self.parts,\n            placement_sequence=self.placement_sequence\n        )\n        \n        return final_metrics\n\n    def render(self, mode='human'):\n        \"\"\"渲染环境状态\"\"\"\n        if mode == 'human':\n            print(f\"Step: {self.current_step}\")\n            print(f\"Placement sequence: {self.placement_sequence}\")\n            print(f\"Unplaced parts: {self.unplaced_parts}\")\n            print(f\"Total reward: {self.total_reward:.3f}\")\n            if self.step_rewards:\n                print(f\"Last step reward: {self.step_rewards[-1]:.3f}\")\n            print(\"-\" * 50)\n\n    def get_episode_summary(self) -&gt; Dict:\n        \"\"\"获取episode总结\"\"\"\n        final_metrics = self.get_placement_metrics()\n        \n        return {\n            'total_steps': self.current_step,\n            'total_reward': self.total_reward,\n            'average_step_reward': np.mean(self.step_rewards) if self.step_rewards else 0,\n            'placement_sequence': self.placement_sequence,\n            'final_metrics': final_metrics,\n            'step_rewards': self.step_rewards,\n            'num_parts': self.num_parts,\n            'success': len(self.placement_sequence) == self.num_parts\n        }\n\n    def update_reward_weights(self, w1: float, w2: float, w3: float):\n        \"\"\"更新奖励权重\"\"\"\n        self.reward_calculator.update_weights(w1, w2, w3)\n\n    def get_reward_weights(self) -&gt; Tuple[float, float, float]:\n        \"\"\"获取当前奖励权重\"\"\"\n        return self.reward_calculator.get_weights()\n\n\nclass TDDataLoader:\n    \"\"\"时序差分数据加载器\"\"\"\n    \n    def __init__(self, data_file: str, test_data_file: str = None):\n        self.data_file = data_file\n        self.test_data_file = test_data_file\n        self.instances = []\n        self.test_instances = []\n        self.load_data()\n        if test_data_file:\n            self.load_test_data()\n    \n    def load_data(self):\n        \"\"\"加载训练数据\"\"\"\n        try:\n            with open(self.data_file, 'r') as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 保留bin、parts和placement_order信息\n                    filtered_instance = {\n                        'bin': instance['bin'],\n                        'parts': instance['parts'],\n                        'placement_order': instance.get('placement_order', [])\n                    }\n                    self.instances.append(filtered_instance)\n            logger.info(f\"加载了 {len(self.instances)} 个训练实例\")\n        except Exception as e:\n            logger.error(f\"加载训练数据时出错: {e}\")\n            self.instances = []\n    \n    def load_test_data(self):\n        \"\"\"加载测试数据\"\"\"\n        try:\n            with open(self.test_data_file, 'r') as f:\n                for line in f:\n                    instance = json.loads(line)\n                    # 只保留bin和parts信息\n                    filtered_instance = {\n                        'bin': instance['bin'],\n                        'parts': instance['parts']\n                    }\n                    self.test_instances.append(filtered_instance)\n            logger.info(f\"加载了 {len(self.test_instances)} 个测试实例\")\n        except Exception as e:\n            logger.error(f\"加载测试数据时出错: {e}\")\n            self.test_instances = []\n    \n    def get_random_instance(self) -&gt; Dict:\n        \"\"\"获取随机训练实例\"\"\"\n        if not self.instances:\n            return None\n        return random.choice(self.instances)\n    \n    def get_instance(self, index: int) -&gt; Dict:\n        \"\"\"获取指定索引的训练实例\"\"\"\n        if 0 &lt;= index &lt; len(self.instances):\n            return self.instances[index]\n        return None\n    \n    def get_test_instance(self, index: int) -&gt; Dict:\n        \"\"\"获取指定索引的测试实例\"\"\"\n        if 0 &lt;= index &lt; len(self.test_instances):\n            return self.test_instances[index]\n        return None\n    \n    def get_test_instances(self, num_instances: int = 100) -&gt; List[Dict]:\n        \"\"\"获取指定数量的测试实例\"\"\"\n        if not self.test_instances:\n            return []\n        return self.test_instances[:min(num_instances, len(self.test_instances))]\n    \n    def __len__(self):\n        return len(self.instances) "
 }
 ```
 User decision: **accepted**
@@ -5550,45 +5550,45 @@ Parameters:
 
 ```json
 {
-  &quot;relativeWorkspacePath&quot;: &quot;src/ppo_trainer.py&quot;
+  "relativeWorkspacePath": "src/ppo_trainer.py"
 }
 ```
 Additional data:
 
 ```json
 {
-  &quot;codeblockId&quot;: &quot;8e02a906-6d51-4463-92d7-83c5ce8280e6&quot;
+  "codeblockId": "8e02a906-6d51-4463-92d7-83c5ce8280e6"
 }
 ```
 Result:
 
 ```json
 {
-  &quot;diff&quot;: {
-    &quot;chunks&quot;: [
+  "diff": {
+    "chunks": [
       {
-        &quot;diffString&quot;: &quot;          self.train_loader = TDDataLoader(args.train_file)\n          self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n-         self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n+         # 传入 rule_weight 以控制规则奖励强度\n+         self.env = TDEnvironment(\n+             max_parts=args.max_seq_len,\n+             reward_weights=tuple(args.reward_weights),\n+             rule_weight=args.rule_weight\n+         )\n          \n          # 模型&quot;,
-        &quot;oldStart&quot;: 138,
-        &quot;newStart&quot;: 138,
-        &quot;oldLines&quot;: 5,
-        &quot;newLines&quot;: 10,
-        &quot;linesRemoved&quot;: 1,
-        &quot;linesAdded&quot;: 6
+        "diffString": "          self.train_loader = TDDataLoader(args.train_file)\n          self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n-         self.env = TDEnvironment(max_parts=args.max_seq_len, reward_weights=tuple(args.reward_weights))\n+         # 传入 rule_weight 以控制规则奖励强度\n+         self.env = TDEnvironment(\n+             max_parts=args.max_seq_len,\n+             reward_weights=tuple(args.reward_weights),\n+             rule_weight=args.rule_weight\n+         )\n          \n          # 模型",
+        "oldStart": 138,
+        "newStart": 138,
+        "oldLines": 5,
+        "newLines": 10,
+        "linesRemoved": 1,
+        "linesAdded": 6
       },
       {
-        &quot;diffString&quot;: &quot;      # --- Environment and Reward ---\n      parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])\n+     parser.add_argument(\n+         &#39;--rule_weight&#39;,\n+         type=float,\n+         default=0.05,\n+         help=&#39;规则奖励权重：鼓励接近面积降序的排样顺序，0 表示关闭规则奖励&#39;\n+     )\n      \n      # --- Training and Logging ---&quot;,
-        &quot;oldStart&quot;: 397,
-        &quot;newStart&quot;: 402,
-        &quot;oldLines&quot;: 4,
-        &quot;newLines&quot;: 10,
-        &quot;linesAdded&quot;: 6
+        "diffString": "      # --- Environment and Reward ---\n      parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])\n+     parser.add_argument(\n+         '--rule_weight',\n+         type=float,\n+         default=0.05,\n+         help='规则奖励权重：鼓励接近面积降序的排样顺序，0 表示关闭规则奖励'\n+     )\n      \n      # --- Training and Logging ---",
+        "oldStart": 397,
+        "newStart": 402,
+        "oldLines": 4,
+        "newLines": 10,
+        "linesAdded": 6
       }
     ],
-    &quot;editor&quot;: &quot;EDITOR_AI&quot;
+    "editor": "EDITOR_AI"
   },
-  &quot;shouldAutoFixLints&quot;: true,
-  &quot;resultForModel&quot;: &quot;Success. Updated the following files:\nM src/ppo_trainer.py&quot;,
-  &quot;contentsAfterEdit&quot;: &quot;import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), &#39;..&#39;))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\&quot;Warning: wandb not available. Install with: pip install wandb\&quot;)\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \&quot;\&quot;\&quot;\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \&quot;\&quot;\&quot;\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \&quot;\&quot;\&quot;\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \&quot;\&quot;\&quot;\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \&quot;\&quot;\&quot;\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \&quot;\&quot;\&quot;\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0][&#39;state&#39;].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep[&#39;rewards&#39;], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep[&#39;values&#39;], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep[&#39;state&#39;], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep[&#39;actions&#39;], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep[&#39;log_probs&#39;], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep[&#39;valid_length&#39;])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device(&#39;cuda&#39; if torch.cuda.is_available() else &#39;cpu&#39;)\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        # 传入 rule_weight 以控制规则奖励强度\n        self.env = TDEnvironment(\n            max_parts=args.max_seq_len,\n            reward_weights=tuple(args.reward_weights),\n            rule_weight=args.rule_weight\n        )\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \&quot;\&quot;\&quot;主训练循环\&quot;\&quot;\&quot;\n        logger.info(\&quot;Starting PPO training loop (Trajectory-based)...\&quot;)\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    &#39;state&#39;: state_np, # 原始状态 (max_parts, 2)\n                    &#39;actions&#39;: ep_actions,\n                    &#39;log_probs&#39;: ep_log_probs,\n                    &#39;rewards&#39;: ep_rewards,\n                    &#39;values&#39;: ep_values,\n                    &#39;valid_length&#39;: valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get(&#39;material_utilization&#39;, 0)\n                    logger.info(f\&quot;Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\&quot;)\n                    if self.use_wandb:\n                        wandb.log({\&quot;rollout/ep_reward\&quot;: sum(ep_rewards), \&quot;rollout/ep_util\&quot;: util, \&quot;global_step\&quot;: self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\&quot;Starting PPO update...\&quot;)\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction=&#39;none&#39;)\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\&quot;Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\&quot;)\n            \n            if self.use_wandb:\n                wandb.log({\n                    \&quot;train/loss\&quot;: loss.item(),\n                    \&quot;train/policy_loss\&quot;: policy_loss.item(),\n                    \&quot;train/value_loss\&quot;: value_loss.item(),\n                    \&quot;train/entropy_loss\&quot;: entropy_loss.item(),\n                    \&quot;global_step\&quot;: self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\&quot;Evaluating at step {self.global_step}...\&quot;)\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get(&#39;material_utilization&#39;, 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\&quot;Eval Avg Util: {avg_util:.4f}\&quot;)\n        if self.use_wandb:\n            wandb.log({\&quot;eval/avg_util\&quot;: avg_util, \&quot;global_step\&quot;: self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = &#39;ppo_policy_best.pth&#39; if is_best else f&#39;ppo_policy_latest.pth&#39;\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            &#39;model_state_dict&#39;: self.policy.state_dict(),\n            &#39;optimizer_state_dict&#39;: self.optimizer.state_dict(),\n            &#39;args&#39;: self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description=&#39;PPO Trainer for 2D Nesting Problem&#39;)\n    \n    # --- Data and Paths ---\n    parser.add_argument(&#39;--train_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/train.jsonl&#39;)\n    parser.add_argument(&#39;--test_file&#39;, type=str, default=&#39;./data/placement-0529-ga-20epoch-norotation/test.jsonl&#39;)\n    parser.add_argument(&#39;--output_dir&#39;, type=str, default=&#39;./models_ppo&#39;, help=&#39;Directory to save models&#39;)\n    parser.add_argument(&#39;--log_dir&#39;, type=str, default=&#39;./logs_ppo&#39;, help=&#39;Directory to save logs&#39;)\n    \n    # --- Model Hyperparameters ---\n    # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n    parser.add_argument(&#39;--input_dim&#39;, type=int, default=5)\n    parser.add_argument(&#39;--hidden_dim&#39;, type=int, default=128)\n    parser.add_argument(&#39;--max_seq_len&#39;, type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument(&#39;--total_timesteps&#39;, type=int, default=1_000_000, help=&#39;Total timesteps to train the agent&#39;)\n    parser.add_argument(&#39;--learning_rate&#39;, type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument(&#39;--batch_size&#39;, type=int, default=16, help=&#39;Number of episodes per PPO update&#39;)\n    parser.add_argument(&#39;--n_epochs&#39;, type=int, default=4, help=&#39;Number of epochs to update the policy on the collected data&#39;)\n    parser.add_argument(&#39;--gamma&#39;, type=float, default=0.99)\n    parser.add_argument(&#39;--gae_lambda&#39;, type=float, default=0.95)\n    parser.add_argument(&#39;--clip_range&#39;, type=float, default=0.2)\n    parser.add_argument(&#39;--ent_coef&#39;, type=float, default=0.01, help=&#39;Entropy coefficient&#39;)\n    parser.add_argument(&#39;--vf_coef&#39;, type=float, default=0.5, help=&#39;Value function coefficient&#39;)\n    parser.add_argument(&#39;--max_grad_norm&#39;, type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument(&#39;--reward_weights&#39;, nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    parser.add_argument(\n        &#39;--rule_weight&#39;,\n        type=float,\n        default=0.05,\n        help=&#39;规则奖励权重：鼓励接近面积降序的排样顺序，0 表示关闭规则奖励&#39;\n    )\n    \n    # --- Training and Logging ---\n    parser.add_argument(&#39;--eval_interval&#39;, type=int, default=5000, help=&#39;Evaluate the agent every N steps&#39;)\n    parser.add_argument(&#39;--max_test_instances&#39;, type=int, default=100)\n    parser.add_argument(&#39;--use_wandb&#39;, action=&#39;store_true&#39;, default=True, help=&#39;Use Weights &amp; Biases for logging&#39;)\n    parser.add_argument(&#39;--wandb_project&#39;, type=str, default=&#39;ppo_svgnest&#39;)\n    parser.add_argument(&#39;--wandb_run_name&#39;, type=str, default=f&#39;ppo_run_{time.strftime(\&quot;%Y%m%d-%H%M%S\&quot;)}&#39;)\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, &#39;train_ppo.log&#39;))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(name)s - %(levelname)s - %(message)s&#39;))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter(&#39;%(asctime)s - %(levelname)s - %(message)s&#39;))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\&quot;Training arguments: {args}\&quot;)\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == &#39;__main__&#39;:\n    main()\n&quot;
+  "shouldAutoFixLints": true,
+  "resultForModel": "Success. Updated the following files:\nM src/ppo_trainer.py",
+  "contentsAfterEdit": "import torch\nimport torch.nn as nn\nimport torch.optim as optim\nimport numpy as np\nimport logging\nimport os\nimport time\nimport sys\nimport argparse\nfrom torch.distributions import Categorical\nfrom typing import Dict, Optional, List\n\n# 添加项目根目录到Python路径\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))\n\n# --- 导入项目模块 ---\nfrom src.model.ppo_actor_critic import PPOActorCritic\nfrom src.environment.td_environment import TDEnvironment, TDDataLoader\n\ntry:\n    import wandb\n    WANDB_AVAILABLE = True\nexcept ImportError:\n    WANDB_AVAILABLE = False\n    print(\"Warning: wandb not available. Install with: pip install wandb\")\n\nlogger = logging.getLogger(__name__)\n\nclass EpisodeBuffer:\n    \"\"\"\n    改进后的缓冲区，存储完整的 Episode 轨迹。\n    \"\"\"\n    def __init__(self, device):\n        self.device = device\n        self.reset()\n\n    def reset(self):\n        self.episodes = [] # 存储每个 episode 的字典\n\n    def add_episode(self, episode_data: Dict):\n        \"\"\"\n        episode_data 包含:\n        - state: (max_seq_len, input_dim) 问题实例\n        - actions: (seq_len,)\n        - log_probs: (seq_len,)\n        - rewards: (seq_len,)\n        - values: (seq_len,)\n        - valid_length: int\n        \"\"\"\n        self.episodes.append(episode_data)\n\n    def compute_gae_and_stack(self, gamma: float, gae_lambda: float):\n        \"\"\"\n        为缓冲区中的所有 episodes 计算 GAE，并将它们堆叠成 Tensor Batch。\n        \"\"\"\n        all_states = []\n        all_actions = []\n        all_log_probs = []\n        all_advantages = []\n        all_returns = []\n        all_values = []\n        all_valid_lengths = []\n        \n        if not self.episodes:\n            return None\n\n        # 获取 state 的形状以确定 max_seq_len\n        # 注意：TDEnvironment 返回的 state 已经是固定大小 [max_parts, 2]\n        max_len = self.episodes[0]['state'].shape[0]\n        \n        for ep in self.episodes:\n            # 转换为 Tensor\n            rewards = torch.tensor(ep['rewards'], dtype=torch.float32, device=self.device)\n            values = torch.tensor(ep['values'], dtype=torch.float32, device=self.device)\n            \n            seq_len = len(rewards)\n            advantages = torch.zeros_like(rewards)\n            last_gae_lam = 0\n            \n            # GAE 计算\n            for t in reversed(range(seq_len)):\n                if t == seq_len - 1:\n                    next_value = 0.0  # 假设 episode 结束时价值为 0\n                else:\n                    next_value = values[t + 1]\n                    \n                delta = rewards[t] + gamma * next_value - values[t]\n                last_gae_lam = delta + gamma * gae_lambda * last_gae_lam\n                advantages[t] = last_gae_lam\n            \n            returns = advantages + values\n            \n            all_states.append(torch.tensor(ep['state'], dtype=torch.float32, device=self.device))\n            all_actions.append(torch.tensor(ep['actions'], dtype=torch.long, device=self.device))\n            all_log_probs.append(torch.tensor(ep['log_probs'], dtype=torch.float32, device=self.device))\n            all_advantages.append(advantages)\n            all_returns.append(returns)\n            all_values.append(values)\n            all_valid_lengths.append(ep['valid_length'])\n\n        # 堆叠并 Padding\n        batch_size = len(self.episodes)\n        \n        padded_actions = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)\n        padded_log_probs = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_returns = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n        padded_values = torch.zeros((batch_size, max_len), dtype=torch.float32, device=self.device)\n\n        for i, length in enumerate(all_valid_lengths):\n            # 截断以防万一长度超过 max_len\n            actual_len = min(length, max_len)\n            padded_actions[i, :actual_len] = all_actions[i][:actual_len]\n            padded_log_probs[i, :actual_len] = all_log_probs[i][:actual_len]\n            padded_advantages[i, :actual_len] = all_advantages[i][:actual_len]\n            padded_returns[i, :actual_len] = all_returns[i][:actual_len]\n            padded_values[i, :actual_len] = all_values[i][:actual_len]\n\n        return (\n            torch.stack(all_states),      # [Batch, Max_Seq, Dim]\n            padded_actions,               # [Batch, Max_Seq]\n            padded_log_probs,             # [Batch, Max_Seq]\n            padded_advantages,            # [Batch, Max_Seq]\n            padded_returns,               # [Batch, Max_Seq]\n            padded_values,                # [Batch, Max_Seq]\n            torch.tensor(all_valid_lengths, device=self.device) # [Batch]\n            )\n\n    def __len__(self):\n        return len(self.episodes)\n\nclass PPOTrainer:\n    def __init__(self, args):\n        self.args = args\n        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n        \n        # 环境和数据加载器\n        self.train_loader = TDDataLoader(args.train_file)\n        self.test_loader = TDDataLoader(args.train_file, args.test_file) if args.test_file and os.path.exists(args.test_file) else None\n        # 传入 rule_weight 以控制规则奖励强度\n        self.env = TDEnvironment(\n            max_parts=args.max_seq_len,\n            reward_weights=tuple(args.reward_weights),\n            rule_weight=args.rule_weight\n        )\n        \n        # 模型\n        self.policy = PPOActorCritic(args.input_dim, args.hidden_dim, args.max_seq_len).to(self.device)\n        self.optimizer = optim.Adam(self.policy.parameters(), lr=args.learning_rate, eps=1e-5)\n        \n        # 缓冲区 - 使用新的 EpisodeBuffer\n        self.buffer = EpisodeBuffer(self.device)\n        \n        # 训练状态\n        self.global_step = 0\n        self.episode_count = 0\n        self.best_eval_util = 0.0\n        self.use_wandb = args.use_wandb and WANDB_AVAILABLE\n        os.makedirs(args.output_dir, exist_ok=True)\n\n    def learn(self):\n        \"\"\"主训练循环\"\"\"\n        logger.info(\"Starting PPO training loop (Trajectory-based)...\")\n\n        while self.global_step &lt; self.args.total_timesteps:\n            # 1. 数据收集阶段 (Collection Phase)\n            self.policy.eval()\n            self.buffer.reset()\n\n            collection_steps = 0\n            episodes_collected = 0\n            \n            # 收集直到达到 batch_size 个 episodes\n            target_episodes = self.args.batch_size \n            \n            while episodes_collected &lt; target_episodes:\n                instance = self.train_loader.get_random_instance()\n                state_np = self.env.reset(instance)\n                current_state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                \n                valid_length = self.env.num_parts\n                valid_length_tensor = torch.tensor([valid_length], device=self.device)\n                \n                # 临时存储当前 episode 数据\n                ep_actions = []\n                ep_log_probs = []\n                ep_rewards = []\n                ep_values = []\n                \n                # 初始化 LSTM 和 Mask\n                with torch.no_grad():\n                    encoder_outputs = self.policy.encode_inputs(current_state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n\n                done = False\n                ep_step = 0\n                \n                while not done:\n                    self.global_step += 1\n                    ep_step += 1\n                    \n                    with torch.no_grad():\n                        # Forward 即使在 rollout 时也需要 mask 以防止重复选择\n                        logits, value, next_decoder_hidden = self.policy.forward(\n                            encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                            decoder_hidden, selected_mask.unsqueeze(0), valid_length_tensor\n                        )\n                        \n                        dist = Categorical(logits=logits)\n                        action = dist.sample()\n                        log_prob = dist.log_prob(action)\n                    \n                    # 环境交互\n                    next_state_np, reward, done, info = self.env.step(action.item())\n                    \n                    # 存储 Step 数据\n                    ep_actions.append(action.item())\n                    ep_log_probs.append(log_prob.item())\n                    ep_rewards.append(reward)\n                    ep_values.append(value.item())\n                    \n                    # 更新状态\n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n                \n                # Episode 结束，存入 Buffer\n                self.buffer.add_episode({\n                    'state': state_np, # 原始状态 (max_parts, 2)\n                    'actions': ep_actions,\n                    'log_probs': ep_log_probs,\n                    'rewards': ep_rewards,\n                    'values': ep_values,\n                    'valid_length': valid_length\n                })\n                \n                episodes_collected += 1\n                collection_steps += ep_step\n                self.episode_count += 1\n\n                # 记录日志 (采样频率降低以避免刷屏)\n                if self.episode_count % 10 == 0:\n                    metrics = self.env.get_placement_metrics()\n                    util = metrics.get('material_utilization', 0)\n                    logger.info(f\"Ep {self.episode_count}: Reward={sum(ep_rewards):.2f}, Len={ep_step}, Util={util:.3f}\")\n                    if self.use_wandb:\n                        wandb.log({\"rollout/ep_reward\": sum(ep_rewards), \"rollout/ep_util\": util, \"global_step\": self.global_step})\n                    \n            # 2. 更新阶段 (Update Phase)\n            logger.debug(\"Starting PPO update...\")\n            self.policy.train()\n            \n            # 计算 GAE 并获取堆叠后的 Batch 数据\n            batch_data = self.buffer.compute_gae_and_stack(self.args.gamma, self.args.gae_lambda)\n            if batch_data is None:\n                continue\n                \n            states_b, actions_b, old_log_probs_b, advantages_b, returns_b, values_b, valid_lens_b = batch_data\n            \n            # 标准化优势\n            if advantages_b.std() &gt; 1e-8:\n                advantages_b = (advantages_b - advantages_b.mean()) / (advantages_b.std() + 1e-8)\n                    \n            # PPO Epochs\n            # 这里对整个 Batch 进行多轮更新\n            for epoch in range(self.args.n_epochs):\n                # 调用新的 evaluate_actions (处理整个序列，自动 Teacher Forcing 重建状态)\n                new_log_probs, new_values, entropy = self.policy.evaluate_actions(states_b, actions_b, valid_lens_b)\n                \n                # 创建 Mask 以过滤掉 Padding 部分的影响\n                # [Batch, Max_Seq]\n                mask = torch.arange(self.args.max_seq_len, device=self.device).unsqueeze(0) &lt; valid_lens_b.unsqueeze(1)\n                mask_float = mask.float()\n                \n                # --- 计算 Loss ---\n                # 1. Policy Loss\n                ratio = torch.exp(new_log_probs - old_log_probs_b)\n                surr1 = ratio * advantages_b\n                surr2 = torch.clamp(ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range) * advantages_b\n                policy_loss = -torch.min(surr1, surr2)\n                \n                # 应用 Mask 并取平均 (只对有效步数)\n                policy_loss = (policy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 2. Value Loss\n                value_loss = nn.functional.mse_loss(new_values, returns_b, reduction='none')\n                value_loss = (value_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n\n                # 3. Entropy Loss\n                entropy_loss = -entropy\n                entropy_loss = (entropy_loss * mask_float).sum() / (mask_float.sum() + 1e-8)\n                \n                loss = policy_loss + self.args.vf_coef * value_loss + self.args.ent_coef * entropy_loss\n                    \n                # 优化\n                self.optimizer.zero_grad()\n                loss.backward()\n                nn.utils.clip_grad_norm_(self.policy.parameters(), self.args.max_grad_norm)\n                self.optimizer.step()\n            \n                if epoch == 0:\n                    logger.debug(f\"Update Epoch 0: Loss={loss.item():.4f}, P_Loss={policy_loss.item():.4f}, V_Loss={value_loss.item():.4f}\")\n            \n            if self.use_wandb:\n                wandb.log({\n                    \"train/loss\": loss.item(),\n                    \"train/policy_loss\": policy_loss.item(),\n                    \"train/value_loss\": value_loss.item(),\n                    \"train/entropy_loss\": entropy_loss.item(),\n                    \"global_step\": self.global_step\n                })\n\n            # 定期评估\n            if self.global_step % self.args.eval_interval &lt; collection_steps and self.test_loader:\n                self.evaluate()\n\n    def evaluate(self):\n        logger.info(f\"Evaluating at step {self.global_step}...\")\n        self.policy.eval()\n        total_util = 0.0\n        num_instances = min(self.args.max_test_instances, len(self.test_loader.test_instances))\n\n        for i in range(num_instances):\n            instance = self.test_loader.get_test_instance(i)\n            state_np = self.env.reset(instance)\n            \n            with torch.no_grad():\n                state = torch.tensor(state_np, dtype=torch.float32, device=self.device)\n                encoder_outputs = self.policy.encode_inputs(state.unsqueeze(0)).squeeze(0)\n                decoder_input, decoder_hidden = self.policy.get_initial_state(1, self.device)\n                decoder_input = decoder_input.squeeze(0)\n                selected_mask = torch.zeros(self.args.max_seq_len, dtype=torch.bool, device=self.device)\n                valid_length = torch.tensor([self.env.num_parts], device=self.device)\n\n                done = False\n                while not done:\n                    logits, _, next_decoder_hidden = self.policy.forward(\n                        encoder_outputs.unsqueeze(0), decoder_input.unsqueeze(0),\n                        decoder_hidden, selected_mask.unsqueeze(0), valid_length\n                    )\n                    # 评估时使用贪心策略\n                    action = torch.argmax(logits, dim=1)\n                    \n                    _, _, done, _ = self.env.step(action.item())\n                    \n                    decoder_hidden = next_decoder_hidden\n                    decoder_input = encoder_outputs[action.item()]\n                    selected_mask[action.item()] = True\n            \n            metrics = self.env.get_placement_metrics()\n            total_util += metrics.get('material_utilization', 0)\n        \n        avg_util = total_util / num_instances\n        logger.info(f\"Eval Avg Util: {avg_util:.4f}\")\n        if self.use_wandb:\n            wandb.log({\"eval/avg_util\": avg_util, \"global_step\": self.global_step})\n\n        if avg_util &gt; self.best_eval_util:\n            self.best_eval_util = avg_util\n            self.save_model(is_best=True)\n        self.save_model(is_best=False)\n\n    def save_model(self, is_best=False):\n        filename = 'ppo_policy_best.pth' if is_best else f'ppo_policy_latest.pth'\n        filepath = os.path.join(self.args.output_dir, filename)\n        torch.save({\n            'model_state_dict': self.policy.state_dict(),\n            'optimizer_state_dict': self.optimizer.state_dict(),\n            'args': self.args\n        }, filepath)\n\ndef parse_args():\n    parser = argparse.ArgumentParser(description='PPO Trainer for 2D Nesting Problem')\n    \n    # --- Data and Paths ---\n    parser.add_argument('--train_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/train.jsonl')\n    parser.add_argument('--test_file', type=str, default='./data/placement-0529-ga-20epoch-norotation/test.jsonl')\n    parser.add_argument('--output_dir', type=str, default='./models_ppo', help='Directory to save models')\n    parser.add_argument('--log_dir', type=str, default='./logs_ppo', help='Directory to save logs')\n    \n    # --- Model Hyperparameters ---\n    # 输入特征维度：宽、高、是否已放置、当前利用率、步数比例\n    parser.add_argument('--input_dim', type=int, default=5)\n    parser.add_argument('--hidden_dim', type=int, default=128)\n    parser.add_argument('--max_seq_len', type=int, default=60)\n    \n    # --- PPO Hyperparameters ---\n    parser.add_argument('--total_timesteps', type=int, default=1_000_000, help='Total timesteps to train the agent')\n    parser.add_argument('--learning_rate', type=float, default=1e-4)\n    # 这里 batch_size 修改为 episodes per update\n    parser.add_argument('--batch_size', type=int, default=16, help='Number of episodes per PPO update')\n    parser.add_argument('--n_epochs', type=int, default=4, help='Number of epochs to update the policy on the collected data')\n    parser.add_argument('--gamma', type=float, default=0.99)\n    parser.add_argument('--gae_lambda', type=float, default=0.95)\n    parser.add_argument('--clip_range', type=float, default=0.2)\n    parser.add_argument('--ent_coef', type=float, default=0.01, help='Entropy coefficient')\n    parser.add_argument('--vf_coef', type=float, default=0.5, help='Value function coefficient')\n    parser.add_argument('--max_grad_norm', type=float, default=0.5)\n    \n    # --- Environment and Reward ---\n    parser.add_argument('--reward_weights', nargs=3, type=float, default=[0.65, 0.05, 0.3])\n    parser.add_argument(\n        '--rule_weight',\n        type=float,\n        default=0.05,\n        help='规则奖励权重：鼓励接近面积降序的排样顺序，0 表示关闭规则奖励'\n    )\n    \n    # --- Training and Logging ---\n    parser.add_argument('--eval_interval', type=int, default=5000, help='Evaluate the agent every N steps')\n    parser.add_argument('--max_test_instances', type=int, default=100)\n    parser.add_argument('--use_wandb', action='store_true', default=True, help='Use Weights &amp; Biases for logging')\n    parser.add_argument('--wandb_project', type=str, default='ppo_svgnest')\n    parser.add_argument('--wandb_run_name', type=str, default=f'ppo_run_{time.strftime(\"%Y%m%d-%H%M%S\")}')\n    \n    return parser.parse_args()\n\ndef main():\n    args = parse_args()\n\n    # --- Setup Logging ---\n    os.makedirs(args.log_dir, exist_ok=True)\n    \n    file_handler = logging.FileHandler(os.path.join(args.log_dir, 'train_ppo.log'))\n    file_handler.setLevel(logging.DEBUG)\n    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))\n    \n    console_handler = logging.StreamHandler(sys.stdout)\n    console_handler.setLevel(logging.INFO)\n    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))\n    \n    logging.basicConfig(\n        level=logging.DEBUG,\n        handlers=[file_handler, console_handler]\n    )\n    \n    logger.info(f\"Training arguments: {args}\")\n    \n    # --- Setup W&amp;B ---\n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.init(\n            project=args.wandb_project,\n            name=args.wandb_run_name,\n            config=vars(args)\n        )\n    \n    # --- Create and run trainer ---\n    trainer = PPOTrainer(args)\n    trainer.learn()\n    \n    if args.use_wandb and WANDB_AVAILABLE:\n        wandb.finish()\n\nif __name__ == '__main__':\n    main()\n"
 }
 ```
 User decision: **accepted**
